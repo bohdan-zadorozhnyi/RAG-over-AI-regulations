@@ -1,0 +1,56 @@
+# 40 questions total, 10 per category. Ten examples below — write the rest
+# yourself; doing so is how you learn the corpus, which is half the point.
+#
+# expected_articles: identifiers a correct retrieval must surface.
+# Format: "<celex>:<article_no>". Empty list means the corpus should NOT
+# answer and a refusal is the correct behaviour.
+
+- id: dl-01
+  category: direct_lookup
+  question: What does Article 9 of the AI Act require of high-risk AI systems?
+  expected_articles: ["32024R1689:9"]
+
+- id: dl-02
+  category: direct_lookup
+  question: What are the record-keeping requirements in Article 12 of the AI Act?
+  expected_articles: ["32024R1689:12"]
+
+- id: dl-03
+  category: direct_lookup
+  question: What rights does GDPR Article 17 grant?
+  expected_articles: ["32016R0679:17"]
+
+- id: ob-01
+  category: obligation
+  question: What must a provider of a high-risk AI system document before placing it on the market?
+  expected_articles: ["32024R1689:11", "32024R1689:18"]
+
+- id: ob-02
+  category: obligation
+  question: What transparency information must be given to people interacting with an AI system?
+  expected_articles: ["32024R1689:50"]
+
+- id: ob-03
+  category: obligation
+  question: How quickly must a financial entity report a major ICT-related incident?
+  expected_articles: ["32022R2554:19"]
+
+- id: cd-01
+  category: cross_document
+  question: How do GDPR data minimisation duties interact with AI Act training data governance?
+  expected_articles: ["32016R0679:5", "32024R1689:10"]
+
+- id: cd-02
+  category: cross_document
+  question: If an AI system processes personal data and fails, which incident reporting duties apply?
+  expected_articles: ["32016R0679:33", "32024R1689:73", "32022R2554:19"]
+
+- id: oos-01
+  category: out_of_scope
+  question: What is the corporate tax rate in Poland?
+  expected_articles: []
+
+- id: oos-02
+  category: out_of_scope
+  question: Which cloud provider should I use to host a vector database?
+  expected_articles: []

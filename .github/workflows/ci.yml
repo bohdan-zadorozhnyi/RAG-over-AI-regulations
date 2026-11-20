@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  REGRAG_DATABASE_URL: postgresql://regrag:regrag@localhost:5432/regrag
+  HIT_AT_5_THRESHOLD: "0.70"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --all-extras
+      - run: uv run ruff check src tests
+      - run: uv run mypy src
+      - run: uv run pytest -q
+
+  eval:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: regrag
+          POSTGRES_PASSWORD: regrag
+          POSTGRES_DB: regrag
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U regrag"
+          --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --all-extras
+
+      - name: Apply schema
+        run: make migrate PSQL="psql $REGRAG_DATABASE_URL"
+
+      - name: Build fixture index
+        run: uv run python -m tests.fixtures.build_index
+
+      - name: Run eval
+        run: uv run regrag eval --report eval-report.md --metrics eval-metrics.json
+
+      - name: Enforce retrieval threshold
+        run: |
+          HIT=$(uv run python -c "import json;print(json.load(open('eval-metrics.json'))['hit_at_5'])")
+          echo "hit@5 = $HIT (threshold $HIT_AT_5_THRESHOLD)"
+          awk -v h="$HIT" -v t="$HIT_AT_5_THRESHOLD" 'BEGIN{exit !(h>=t)}' \
+            || { echo "::error::retrieval regression"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: |
+            eval-report.md
+            eval-metrics.json

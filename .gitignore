@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+eval-report.md
+eval-metrics.json
+.env
+infra/.terraform/
+infra/*.tfstate*
+infra/terraform.tfvars

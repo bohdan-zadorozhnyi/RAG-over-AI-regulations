@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars (gitignored) and set explicitly.
+region  = "eu-central-1"
+project = "reg-rag"
