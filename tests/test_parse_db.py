@@ -6,7 +6,6 @@ rolled back (force_rollback), so nothing is left in the database; the code
 under test's own transaction() blocks become savepoints inside it.
 """
 
-from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,16 +25,6 @@ TEST_CELEX = "TEST00000"  # never a real CELEX id, so it cannot collide with rea
 
 COUNT_DOCUMENTS = "SELECT count(*) FROM documents WHERE celex = %s"
 SELECT_DOCUMENT = "SELECT title, source_url, retrieved_at, checksum FROM documents WHERE id = %s"
-
-
-@pytest.fixture
-def conn() -> Iterator[Connection]:
-    try:
-        connection = psycopg.connect(settings.database_url, autocommit=True, connect_timeout=2)
-    except psycopg.OperationalError:
-        pytest.skip("Postgres not reachable; run make db")
-    with connection, connection.transaction(force_rollback=True):
-        yield connection
 
 
 def make_doc(checksum: str = "v1") -> Document:

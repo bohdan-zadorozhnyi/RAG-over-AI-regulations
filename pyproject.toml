@@ -16,6 +16,7 @@ dependencies = [
     "langchain-text-splitters>=0.3",
     "langfuse>=2.50",
     "boto3>=1.35",
+    "transformers>=5.0",
 ]
 
 [project.optional-dependencies]

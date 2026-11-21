@@ -33,12 +33,13 @@ class Section:
 
 @dataclass(frozen=True)
 class Chunk:
-    section_path: str
+    section_path: str   # the section the chunk starts in
     ordinal: int
     header: str         # "AI Act, Chapter III, Article 9: Risk management, para 2"
     text: str
-    token_count: int
+    token_count: int    # of the embedded text: header + newline + text
     content_hash: str
+    covers: tuple[str, ...]  # every section path the text overlaps, in order
 
 
 @dataclass(frozen=True)

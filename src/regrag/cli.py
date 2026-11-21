@@ -51,9 +51,25 @@ def parse(
 
 
 @app.command()
-def chunk(strategy: str = "section_aware") -> None:
+def chunk(
+    strategy: str = typer.Option("all", help="section_aware, recursive, or all."),
+) -> None:
     """Sections to chunks rows."""
-    raise NotImplementedError
+    import psycopg
+
+    from regrag.chunk import chunk_all
+
+    try:
+        results = chunk_all(strategy)
+    except (ValueError, psycopg.OperationalError) as exc:
+        typer.echo(f"chunk failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    for r in results:
+        typer.echo(
+            f"{r.strategy:<14} {r.celex}  {r.chunks:>5} chunks  max {r.max_tokens:>3} tokens  "
+            f"inserted {r.inserted}, updated {r.updated}, deleted {r.deleted}"
+        )
 
 
 @app.command()
