@@ -264,6 +264,10 @@ def build_header(section: Section, celex: str) -> str:
     'AI Act, Chapter I, Article 3: Definitions, point (1)'
     'AI Act, Recital 12'
     'AI Act, Annex III: High-risk AI systems referred to in Article 6(2), point 5'
+    'AI Act, Annex VIII: Information to be submitted …, Section A, point 9'
+
+    Annex points can restart numbering in each group (Annex VIII Sections
+    A/B/C, Annex X, Annex XI), so a grouped point names its group.
     """
     title = settings.document_titles[celex]
     if section.kind is SectionKind.RECITAL:
@@ -271,6 +275,7 @@ def build_header(section: Section, celex: str) -> str:
 
     parts = [title]
     unit = ""
+    group = ""
     position = ""
     for segment in section.path.split("/"):
         name, _, value = segment.partition("-")
@@ -284,10 +289,13 @@ def build_header(section: Section, celex: str) -> str:
             position = f"paragraph {value}"
         elif name == "point":
             position = f"point {_point_text(section.paragraph_no, value)}"
-        # "group-N" is not shown: the group heading is the chunk's first line
+        elif name == "group":
+            group = _group_label(section.text)
 
     unit_with_heading = f"{unit}: {section.heading}" if section.heading else unit
     parts.append(unit_with_heading)
+    if group:
+        parts.append(group)
     if position:
         parts.append(position)
     return ", ".join(parts)
@@ -296,6 +304,20 @@ def build_header(section: Section, celex: str) -> str:
 def _unit_label(path: str) -> str:
     name, _, value = path.split("/")[-1].partition("-")
     return f"{name.capitalize()} {value}"
+
+
+_SECTION_LABEL = re.compile(r"Section\s+\w+\b")
+
+
+def _group_label(text: str) -> str:
+    """The group heading is a grouped section's first line (see parse).
+
+    'Section A — Information to be submitted …' -> 'Section A'
+    '1. Schengen Information System' -> kept whole: its number alone says little
+    """
+    heading = text.split("\n", 1)[0].strip()
+    label = _SECTION_LABEL.match(heading)
+    return label.group(0) if label else heading.rstrip(".")
 
 
 def _point_text(label: str | None, fallback: str) -> str:

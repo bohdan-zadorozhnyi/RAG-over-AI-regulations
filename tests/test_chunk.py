@@ -89,10 +89,44 @@ def test_header_annex_point_drops_trailing_dot() -> None:
 
 
 def test_header_annex_group_point_and_whole_annex() -> None:
-    grouped = Section("annex-I/group-2/point-13", SectionKind.ANNEX, "Annex I", "13.", "List", "x")
+    grouped = Section(
+        "annex-I/group-2/point-13",
+        SectionKind.ANNEX,
+        "Annex I",
+        "13.",
+        "List",
+        "Section B. List of other Union harmonisation legislation\n13. Regulation (EU) …",
+    )
     whole = Section("annex-VI", SectionKind.ANNEX, "Annex VI", None, "Internal control", "x")
-    assert build_header(grouped, AI_ACT) == "AI Act, Annex I: List, point 13"
+    assert build_header(grouped, AI_ACT) == "AI Act, Annex I: List, Section B, point 13"
     assert build_header(whole, AI_ACT) == "AI Act, Annex VI: Internal control"
+
+
+def test_header_tells_apart_points_that_restart_per_group() -> None:
+    # Annex VIII numbers points 1.. again in each of Sections A, B and C
+    def point_9(group: int, letter: str) -> Section:
+        text = f"Section {letter} — Information to be submitted by providers\n9. Status."
+        return Section(
+            f"annex-VIII/group-{group}/point-9", SectionKind.ANNEX, "Annex VIII", "9.", "Info", text
+        )
+
+    a, b = build_header(point_9(1, "A"), AI_ACT), build_header(point_9(2, "B"), AI_ACT)
+    assert a == "AI Act, Annex VIII: Info, Section A, point 9"
+    assert b == "AI Act, Annex VIII: Info, Section B, point 9"
+
+
+def test_header_numbered_group_heading_is_kept_whole() -> None:
+    s = Section(
+        "annex-X/group-1/point-a",
+        SectionKind.ANNEX,
+        "Annex X",
+        "(a)",
+        "Large-scale IT systems",
+        "1. Schengen Information System\n(a) Regulation (EU) 2018/1860 …",
+    )
+    assert build_header(s, AI_ACT) == (
+        "AI Act, Annex X: Large-scale IT systems, 1. Schengen Information System, point (a)"
+    )
 
 
 def test_header_uses_document_title() -> None:
