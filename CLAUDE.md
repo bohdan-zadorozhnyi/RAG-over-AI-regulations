@@ -45,7 +45,8 @@ Read `@PLAN.md` for the full build plan, schema and step order.
   not an update. The column is `VECTOR(1024)` because HNSW needs a fixed
   dimension, so a model of a different dimension needs a new migration.
 - Retrieval changes require a `make eval` run before the commit, and the
-  metrics go in the commit message.
+  metrics go in the commit message. The initial implementation is exempt —
+  there is no baseline yet; the first measured metrics land with step 6.
 - Do not add a dependency without saying why in the commit message.
   `langchain-text-splitters` is present only as an eval baseline.
 - Answers must cite article numbers. If retrieved chunks do not support an
