@@ -73,9 +73,35 @@ def chunk(
 
 
 @app.command()
-def embed(strategy: str = "section_aware") -> None:
+def embed(
+    strategy: str = typer.Option("all", help="section_aware, recursive, or all."),
+) -> None:
     """Generate and store embeddings for pending chunks."""
-    raise NotImplementedError
+    import time
+
+    import psycopg
+
+    from regrag.config import settings
+    from regrag.embed import embed_pending, resolve_device
+
+    device = resolve_device(settings.embedding_device)
+    typer.echo(f"model {settings.embedding_model} on {device}, {settings.embedding_precision}")
+
+    def progress(done: int, total: int) -> None:
+        typer.echo(f"\r  embedded {done}/{total}", nl=False)
+        if done == total:
+            typer.echo("")
+
+    started = time.monotonic()
+    try:
+        results = embed_pending(strategy, progress=progress)
+    except (ValueError, psycopg.OperationalError) as exc:
+        typer.echo(f"\nembed failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    for r in results:
+        typer.echo(f"{r.strategy:<14} embedded {r.embedded}, already had {r.already}")
+    typer.echo(f"done in {time.monotonic() - started:.0f}s")
 
 
 @app.command()

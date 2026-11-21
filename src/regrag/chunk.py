@@ -24,7 +24,13 @@ from typing import Protocol, cast
 
 from regrag.config import settings
 from regrag.db import Connection, connect
-from regrag.models import Chunk, Section, SectionKind
+from regrag.models import (
+    SECTION_AWARE,
+    Chunk,
+    Section,
+    SectionKind,
+    select_strategies,
+)
 
 TokenCounter = Callable[[str], int]
 
@@ -58,10 +64,6 @@ def count_tokens(text: str) -> int:
 
 # --- stage entry point ----------------------------------------------------
 
-SECTION_AWARE = "section_aware"
-RECURSIVE = "recursive"
-STRATEGIES = (SECTION_AWARE, RECURSIVE)
-
 SELECT_DOCUMENT_ID = "SELECT id FROM documents WHERE celex = %(celex)s"
 
 # Ordered by id, which follows document order: parse inserts sections in
@@ -94,10 +96,7 @@ def chunk_all(
     on content hashes: unchanged chunks keep their ids and so their embeddings.
     `conn` and `count` are injectable for tests.
     """
-    strategies = STRATEGIES if strategy == "all" else (strategy,)
-    unknown = set(strategies) - set(STRATEGIES)
-    if unknown:
-        raise ValueError(f"unknown strategy {sorted(unknown)}; use one of {STRATEGIES} or all")
+    strategies = select_strategies(strategy)
 
     owns_conn = conn is None
     db = conn or connect()

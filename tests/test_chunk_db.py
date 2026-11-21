@@ -7,10 +7,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from regrag.chunk import RECURSIVE, SECTION_AWARE, chunk_all
+from regrag.chunk import chunk_all
 from regrag.config import settings
 from regrag.db import Connection
-from regrag.models import Document, Section, SectionKind
+from regrag.models import RECURSIVE, SECTION_AWARE, Document, Section, SectionKind
 from regrag.parse import store_document
 
 TEST_CELEX = "TEST00000"

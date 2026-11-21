@@ -1,6 +1,7 @@
 """All tunables. Nothing else in the codebase holds a literal for these."""
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,6 +38,18 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024
     embedding_batch_size: int = 32
+    # "auto" picks mps (Apple GPU), then cuda, then cpu.
+    embedding_device: Literal["auto", "mps", "cuda", "cpu"] = "auto"
+    # fp32 by default: fp16 is faster but its vectors vary slightly across runs
+    # and machines, and eval numbers should be reproducible.
+    embedding_precision: Literal["fp32", "fp16"] = "fp32"
+    # Cap on tokens per input. bge-m3 accepts 8192; chunks are at most
+    # chunk_target_tokens, so this is a guard against silent truncation.
+    embedding_max_seq_length: int = 1024
+
+    # Vector index (HNSW build parameters, see pgvector docs)
+    hnsw_m: int = 16
+    hnsw_ef_construction: int = 64
 
     # Retrieval
     vector_top_k: int = 20

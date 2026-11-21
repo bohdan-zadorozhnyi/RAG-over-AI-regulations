@@ -5,24 +5,35 @@ expensive indexes whose quality or cost depends on the data being present:
 GIN on chunks.tsv and HNSW on embeddings.vector. One place, built last.
 """
 
-import psycopg
+from psycopg import sql
 
 from regrag.config import settings
+from regrag.db import connect
 
 CREATE_GIN = "CREATE INDEX IF NOT EXISTS chunks_tsv_idx ON chunks USING GIN (tsv)"
 
-CREATE_HNSW = """
+# DDL cannot take bind parameters, so the build settings are composed in as
+# SQL literals from config.
+CREATE_HNSW = sql.SQL("""
 CREATE INDEX IF NOT EXISTS embeddings_vector_idx
     ON embeddings USING hnsw (vector vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64)
-"""
+    WITH (m = {m}, ef_construction = {ef_construction})
+""")
 
 ANALYZE = "ANALYZE chunks, embeddings"
 
 
 def build_indexes() -> None:
-    """Idempotent: IF NOT EXISTS on both, then refresh planner statistics."""
-    with psycopg.connect(settings.database_url, autocommit=True) as conn:
+    """Idempotent: IF NOT EXISTS on both, then refresh planner statistics.
+
+    IF NOT EXISTS means changed HNSW settings take effect only after the index
+    is dropped (DROP INDEX embeddings_vector_idx) and rebuilt.
+    """
+    create_hnsw = CREATE_HNSW.format(
+        m=sql.Literal(settings.hnsw_m),
+        ef_construction=sql.Literal(settings.hnsw_ef_construction),
+    )
+    with connect() as conn:
         conn.execute(CREATE_GIN)
-        conn.execute(CREATE_HNSW)
+        conn.execute(create_hnsw)
         conn.execute(ANALYZE)
