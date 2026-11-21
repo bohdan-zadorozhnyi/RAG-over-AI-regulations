@@ -44,10 +44,15 @@ class _Tokenizer(Protocol):
 @cache
 def _tokenizer(model: str) -> _Tokenizer:
     """Load the tokenizer once per process. Downloads only tokenizer files, not
-    model weights, on first use; cached by Hugging Face afterwards."""
+    model weights, on first use; loads from the Hugging Face cache, offline,
+    afterwards."""
     from transformers import AutoTokenizer  # slow import: only when counting
 
-    return cast(_Tokenizer, AutoTokenizer.from_pretrained(model))
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
+    except OSError:  # not cached yet
+        tokenizer = AutoTokenizer.from_pretrained(model)
+    return cast(_Tokenizer, tokenizer)
 
 
 def count_tokens(text: str) -> int:
@@ -56,9 +61,7 @@ def count_tokens(text: str) -> int:
     Special tokens (<s>, </s>) are added once per embedded input, not per
     piece of text, so they are left out of chunk budgets.
     """
-    ids: list[int] = _tokenizer(settings.embedding_model).encode(
-        text, add_special_tokens=False
-    )
+    ids: list[int] = _tokenizer(settings.embedding_model).encode(text, add_special_tokens=False)
     return len(ids)
 
 

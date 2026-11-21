@@ -82,7 +82,8 @@ def embed(
     import psycopg
 
     from regrag.config import settings
-    from regrag.embed import embed_pending, resolve_device
+    from regrag.embed import embed_pending
+    from regrag.encoder import resolve_device
 
     device = resolve_device(settings.embedding_device)
     typer.echo(f"model {settings.embedding_model} on {device}, {settings.embedding_precision}")
@@ -113,9 +114,54 @@ def index() -> None:
 
 
 @app.command()
-def ask(question: str) -> None:
-    """Retrieve and answer with citations."""
-    raise NotImplementedError
+def ask(
+    question: str,
+    strategy: str | None = typer.Option(
+        None, help="section_aware or recursive; defaults to the chunk_strategy setting."
+    ),
+    exclude_recitals: bool = typer.Option(
+        False, "--exclude-recitals", help="Search binding text only (articles, annexes)."
+    ),
+) -> None:
+    """Retrieve and answer with citations.
+
+    Until step 7 adds answer generation, prints the retrieved chunks.
+    """
+    import psycopg
+
+    from regrag.retrieve import search
+
+    try:
+        hits = search(question, strategy=strategy, exclude_recitals=exclude_recitals)
+    except (ValueError, psycopg.OperationalError) as exc:
+        typer.echo(f"ask failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not hits:
+        typer.echo("no chunks retrieved")
+        return
+    typer.echo(f"{len(hits)} chunks ({hits[0].strategy}):")
+    for rank, hit in enumerate(hits, start=1):
+        typer.echo("")
+        typer.echo(
+            f"{rank}. {', '.join(hit.citations)}   score {hit.fused_score:.4f}   "
+            f"vector #{_rank(hit.vector_rank)}  text #{_rank(hit.fts_rank)}"
+        )
+        if hit.header:
+            typer.echo(f"   {hit.header}")
+        typer.echo(f"   {_snippet(hit.text)}")
+
+
+def _rank(rank: int | None) -> str:
+    return "-" if rank is None else str(rank)
+
+
+def _snippet(text: str, limit: int = 220) -> str:
+    """One line: list points joined with ' / ', cut at a word boundary."""
+    flat = " / ".join(line.strip() for line in text.splitlines() if line.strip())
+    if len(flat) <= limit:
+        return flat
+    return flat[:limit].rsplit(" ", 1)[0] + " …"
 
 
 @app.command()

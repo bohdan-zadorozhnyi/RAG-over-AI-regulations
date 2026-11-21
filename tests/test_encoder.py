@@ -1,26 +1,31 @@
-"""Unit tests for embed. Never load the real model (2.2 GB download)."""
+"""Unit tests for encoder.py. Never load the real model (2.2 GB download)."""
 
 import pytest
 from pydantic import ValidationError
 
 from regrag.config import Settings
-from regrag.embed import (
+from regrag.encoder import (
     SPECIAL_TOKENS,
     check_dimension,
     check_fits,
-    embedding_text,
+    chunk_input,
+    query_input,
     resolve_device,
 )
 
 
-def test_embedding_text_joins_header_and_text() -> None:
-    assert embedding_text("AI Act, Recital 12", "(12) The notion…") == (
+def test_chunk_input_joins_header_and_text() -> None:
+    assert chunk_input("AI Act, Recital 12", "(12) The notion…") == (
         "AI Act, Recital 12\n(12) The notion…"
     )
 
 
-def test_embedding_text_without_header_is_the_text() -> None:
-    assert embedding_text("", "baseline chunk text") == "baseline chunk text"
+def test_chunk_input_without_header_is_the_text() -> None:
+    assert chunk_input("", "baseline chunk text") == "baseline chunk text"
+
+
+def test_query_input_is_the_question_alone() -> None:
+    assert query_input("  What does\nArticle 9   require? ") == "What does Article 9 require?"
 
 
 def test_explicit_device_is_kept() -> None:

@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     fts_top_k: int = 20
     fusion_top_k: int = 8
     rrf_k: int = 60
+    # ts_rank normalisation bitmask (Postgres docs): 0 none, 1 divide by
+    # 1 + log(length), 2 divide by length. Long recitals win under 0; an eval
+    # matrix dimension, not a judgement call.
+    fts_rank_normalization: int = 0
+    # HNSW candidates examined per vector search (pgvector default 40). Must be
+    # at least vector_top_k; iterative scans extend it when filters drop rows.
+    hnsw_ef_search: int = 100
 
     # Generation
     answer_provider: str = "bedrock"  # or "gemini", or "none"

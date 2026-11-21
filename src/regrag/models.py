@@ -61,9 +61,16 @@ class Chunk:
 class Retrieved:
     chunk_id: int
     celex: str
-    article_no: str | None
+    article_no: str | None  # of the section the chunk starts in
     header: str
     text: str
-    vector_rank: int | None
-    fts_rank: int | None
+    vector_rank: int | None  # None: not in the vector top-k
+    fts_rank: int | None  # None: not in the full-text top-k
     fused_score: float
+    strategy: str
+    kind: SectionKind  # of the section the chunk starts in
+    section_path: str
+    # Every provision the chunk overlaps, in document order: "32024R1689:9",
+    # "32024R1689:Annex III", "32024R1689:Recital 12". One for section-aware
+    # chunks; possibly several for baseline chunks.
+    citations: tuple[str, ...]

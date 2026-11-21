@@ -12,7 +12,8 @@ from regrag import embed
 from regrag.chunk import chunk_all
 from regrag.config import settings
 from regrag.db import Connection
-from regrag.embed import Vectors, embed_pending
+from regrag.embed import embed_pending
+from regrag.encoder import Vectors, check_model_indexed
 from regrag.models import RECURSIVE, SECTION_AWARE, Document, Section, SectionKind
 from regrag.parse import store_document
 
@@ -230,3 +231,25 @@ def test_single_strategy_leaves_the_other(chunked: Connection) -> None:
     [result] = embed_pending(RECURSIVE, conn=chunked, encoder=FakeEncoder())
     assert result.strategy == RECURSIVE
     assert n_embeddings(chunked) == n_chunks(chunked, [RECURSIVE])
+
+
+# --- encoder.check_model_indexed (the guard search runs first) ------------
+
+
+def test_model_check_passes_for_the_embedded_model(chunked: Connection) -> None:
+    embed_pending(SECTION_AWARE, conn=chunked, encoder=FakeEncoder())
+    check_model_indexed(chunked, "test/fake-encoder", SECTION_AWARE)
+
+
+def test_model_check_names_the_models_that_exist(chunked: Connection) -> None:
+    embed_pending(SECTION_AWARE, conn=chunked, encoder=FakeEncoder())
+    expected = r"no section_aware embeddings for model 'amazon\.titan'"
+    with pytest.raises(ValueError, match=expected) as e:
+        check_model_indexed(chunked, "amazon.titan", SECTION_AWARE)
+    assert "test/fake-encoder" in str(e.value)
+
+
+def test_model_check_is_per_strategy(chunked: Connection) -> None:
+    embed_pending(SECTION_AWARE, conn=chunked, encoder=FakeEncoder())
+    with pytest.raises(ValueError, match="no recursive embeddings"):
+        check_model_indexed(chunked, "test/fake-encoder", RECURSIVE)
