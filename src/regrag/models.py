@@ -1,6 +1,7 @@
 """Row and result types passed between stages."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -16,6 +17,8 @@ class Document:
     title: str
     source_url: str
     checksum: str
+    retrieved_at: datetime
+    size_bytes: int
 
 
 @dataclass(frozen=True)

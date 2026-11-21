@@ -6,9 +6,26 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
 @app.command()
-def ingest() -> None:
+def ingest(
+    refresh: bool = typer.Option(False, help="Re-fetch even if the file on disk is valid.")
+) -> None:
     """Download source documents to data/raw/."""
-    raise NotImplementedError
+    import httpx
+    
+    from regrag.acquire import fetch_all
+    from regrag.config import settings
+
+    try:
+        results = fetch_all(settings.raw_dir, refresh=refresh)
+    except (httpx.HTTPError, ValueError) as exc:
+        typer.echo(f"ingest failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    
+    for r in results:
+        d = r.document
+        typer.echo(
+            f"{r.status:<10} {d.celex} {d.title:<7} {d.checksum[:12]} {d.size_bytes:>10,} B"
+        )
 
 
 @app.command()

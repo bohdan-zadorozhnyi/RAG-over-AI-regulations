@@ -1,5 +1,8 @@
 """All tunables. Nothing else in the codebase holds a literal for these."""
 
+from pathlib import Path
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,8 +12,21 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://regrag:regrag@localhost:5432/regrag"
 
     # Corpus
+    # celex_ids sets order and allows a subset; document_titles is the lookup.
+    # Env overrides for lists and dicts are JSON: REGRAG_CELEX_IDS='["32024R1689"]'
     celex_ids: list[str] = ["32024R1689", "32016R0679", "32022R2554"]
+    document_titles: dict[str, str] = {
+        "32024R1689": "AI Act",
+        "32016R0679": "GDPR",
+        "32022R2554": "DORA",
+    }
     eurlex_html_url: str = "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:{celex}"
+
+    # Acquisition (not retrieval-affecting: keep out of config_hash)
+    raw_dir: Path = Path("data/raw")
+    http_timeout_s: float = 30.0
+    http_retries: int = 3  # connection-level retries only; HTTP error statuses fail loudly
+    http_user_agent: str = "regrag/0.1"
 
     # Chunking
     chunk_target_tokens: int = 600
@@ -33,6 +49,13 @@ class Settings(BaseSettings):
     answer_model: str = "anthropic.claude-sonnet-4-5-20250929-v1:0"
 
     langfuse_enabled: bool = False
+
+    @model_validator(mode="after")
+    def _every_celex_has_a_title(self) -> "Settings":
+        missing = set(self.celex_ids) - self.document_titles.keys()
+        if missing:
+            raise ValueError(f"document_titles missing for: {sorted(missing)}")
+        return self
 
 
 settings = Settings()
