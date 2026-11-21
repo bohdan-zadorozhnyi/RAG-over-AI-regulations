@@ -29,9 +29,25 @@ def ingest(
 
 
 @app.command()
-def parse() -> None:
+def parse(
+    force: bool = typer.Option(False, help="Re-parse even if the stored checksum matches."),
+) -> None:
     """Raw documents to sections rows."""
-    raise NotImplementedError
+    import psycopg
+
+    from regrag.config import settings
+    from regrag.parse import parse_all
+
+    try:
+        results = parse_all(settings.raw_dir, force=force)
+    except (FileNotFoundError, ValueError, psycopg.OperationalError) as exc:
+        typer.echo(f"parse failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    for r in results:
+        kinds = ", ".join(f"{n} {k}" for k, n in sorted(r.by_kind.items()))
+        detail = f"({kinds}) written {r.written}, deleted {r.deleted}" if kinds else ""
+        typer.echo(f"{r.status:<8} {r.celex}  {r.sections:>5} sections  {detail}".rstrip())
 
 
 @app.command()

@@ -7,16 +7,14 @@ import httpx
 import pytest
 
 from regrag.acquire import (
-    MANIFEST_NAME,
     FetchStatus,
     content_checksum,
     fetch_all,
     fetch_one,
-    load_manifest,
     looks_like_document,
-    write_manifest,
 )
 from regrag.config import settings
+from regrag.manifest import MANIFEST_NAME, load_manifest, write_manifest
 from regrag.models import Document
 
 CELEX = "32024R1689"  # must be a real id: fetch_one looks up its title in settings

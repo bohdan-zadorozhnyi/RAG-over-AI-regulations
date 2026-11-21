@@ -1,27 +1,24 @@
 """Step 1. Download source documents to data/raw/ with a manifest.
 
 Idempotent: skip a document whose checksum is unchanged.
-regulation gets amended, and an answer must be traceable to a version.
 Manifest records celex, source url, retrieved_at and sha256 per document —
+regulation gets amended, and an answer must be traceable to a version.
 """
 
-import dataclasses
 import hashlib
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 import httpx
 from selectolax.lexbor import LexborHTMLParser
 
 from regrag.config import settings
+from regrag.manifest import load_manifest, write_manifest
 from regrag.models import Document
 
 ARTICLE_MARKER = b'id="art_'
-MANIFEST_NAME = "manifest.json"
 
 
 class FetchStatus(StrEnum):
@@ -124,41 +121,6 @@ def fetch_one(
     )
     status = FetchStatus.DOWNLOADED if known is None else FetchStatus.UPDATED
     return Fetched(document, status)
-
-
-def write_manifest(raw_dir: Path, documents: dict[str, Document]) -> None:
-    """Atomic: write manifest.json.tmp, then replace()."""
-    payload: dict[str, dict[str, Any]] = {}
-    
-    for celex, doc in documents.items():
-        entry = dataclasses.asdict(doc)
-        entry['retrieved_at'] = doc.retrieved_at.isoformat()
-        payload[celex] = entry
-        
-    tmp = raw_dir / f"{MANIFEST_NAME}.tmp"
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    tmp.replace(raw_dir / MANIFEST_NAME)
-
-
-def load_manifest(raw_dir: Path) -> dict[str, Document]:
-    """Empty dict if no manifest yet."""
-    documents : dict[str, Document] = {}
-    
-    try:
-        raw_text = (raw_dir / MANIFEST_NAME).read_text()
-    except FileNotFoundError:
-        return {}
-    
-    if not raw_text:
-        return {}
-        
-    payload = json.loads(raw_text)
-    for celex, entry in payload.items():
-        entry['retrieved_at'] = datetime.fromisoformat(entry['retrieved_at'])    
-        doc = Document(**entry)
-        documents[celex] = doc
-        
-    return documents
 
 
 def content_checksum(html: bytes) -> str:
