@@ -63,8 +63,11 @@ class Settings(BaseSettings):
     # 1 + log(length), 2 divide by length. Long recitals win under 0; an eval
     # matrix dimension, not a judgement call.
     fts_rank_normalization: int = 0
-    # Recitals explain intent but are not binding. Also an eval matrix dimension.
-    exclude_recitals: bool = False
+    # Recitals explain intent but are not binding, and their explanatory prose
+    # is closer to a plain-language question than article text, so they crowd
+    # articles out. Excluding them won in all 6 strategy x norm pairs of the
+    # step 6 baseline (14 questions gained, 3 lost). Still a matrix dimension.
+    exclude_recitals: bool = True
     # HNSW candidates examined per vector search (pgvector default 40). Must be
     # at least vector_top_k; iterative scans extend it when filters drop rows.
     hnsw_ef_search: int = 100

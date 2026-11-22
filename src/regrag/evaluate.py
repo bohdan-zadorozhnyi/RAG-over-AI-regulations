@@ -436,6 +436,8 @@ def run_matrix(
     encoder: Encoder | None = None,
 ) -> list[RunResult]:
     encode = cached_encoder(encoder or load_encoder(), [query_input(q.question) for q in questions])
+    if questions and params_list:  # untimed: the first timed search would pay for cold caches
+        search(questions[0].question, params_list[0], conn=conn, encoder=encode)
     fingerprints: dict[str, tuple[int, str]] = {}
     runs = []
     for params in params_list:
@@ -630,8 +632,8 @@ def write_metrics_json(
 SELECTION_CAVEAT = (
     "The best combination is chosen on the same questions it is scored on, so "
     "its number is optimistic; the set is too small for a held-out split. "
-    "Section-aware versus recursive is the robust comparison. Differences "
-    "between normalisation settings are likely inside the noise."
+    "One question moves hit@5 by 1/n_answerable: trust differences that hold "
+    "across combinations over the best single number."
 )
 
 
