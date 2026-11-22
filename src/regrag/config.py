@@ -130,7 +130,12 @@ class Settings(BaseSettings):
     # committed.
     answer_cache_dir: Path = Path("data/processed/answer_cache")
 
+    # Tracing to Langfuse Cloud. Off unless enabled with both keys in .env.
     langfuse_enabled: bool = False
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+    # EU region; the US one is https://us.cloud.langfuse.com
+    langfuse_host: str = "https://cloud.langfuse.com"
 
     # Eval (defines the eval, not a retrieval configuration: keep out of config_hash)
     eval_questions_path: Path = Path("data/eval/questions.yaml")
@@ -174,6 +179,9 @@ _NOT_HASHED = frozenset(
         "answer_article_max_chars",
         "answer_context_max_chars",
         "langfuse_enabled",
+        "langfuse_public_key",
+        "langfuse_secret_key",
+        "langfuse_host",
         "eval_questions_path",
         "eval_questions_per_category",
         "eval_fts_rank_normalizations",

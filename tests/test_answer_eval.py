@@ -1,6 +1,7 @@
 """Answer-eval scoring and the reply cache, without a model or a database."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -97,7 +98,8 @@ def test_the_cache_answers_repeats_without_a_call(
     cached = CachedGenerator(generate, tmp_path)
     first = cached("system", "a")
     assert not cached.last_cached
-    assert cached("system", "a") == first and cached.last_cached
+    assert not first.cached
+    assert cached("system", "a") == replace(first, cached=True) and cached.last_cached
     cached("system", "b")
     assert calls == ["a", "b"] and cached.api_calls == 2
 

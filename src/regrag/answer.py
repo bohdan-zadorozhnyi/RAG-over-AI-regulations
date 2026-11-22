@@ -30,13 +30,14 @@ import json
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 from typing import Any, Literal, get_args
 
 from psycopg.types.json import Jsonb
 
-from regrag.config import settings
+from regrag import telemetry
+from regrag.config import config_hash, settings
 from regrag.db import Connection, connect
 from regrag.encoder import Encoder
 from regrag.models import Retrieved
@@ -146,6 +147,7 @@ class Generation:
     input_tokens: int
     output_tokens: int
     stop_reason: str | None
+    cached: bool = False  # served from the answer eval's cache: no call, no cost
 
 
 # (system prompt, user prompt) -> Generation
@@ -183,6 +185,7 @@ class Answer:
     output_tokens: int
     latency_ms: int  # retrieval + generation
     cost_usd: float | None  # None: no price configured for the model
+    trace_id: str | None = None  # Langfuse trace; None when tracing is off
 
     @property
     def refused(self) -> bool:
@@ -463,35 +466,95 @@ def answer(
     reranker: Reranker | None = None,
     generate: Generator | None = None,
     log: bool = True,
+    tags: Sequence[str] = (),
+    session_id: str | None = None,
 ) -> Answer:
     """Retrieve, generate, and (by default) record the exchange in query_log.
 
     Nothing retrieved means nothing to answer from: a refusal, with no call.
+    Traced to Langfuse when it is enabled: `tags` and `session_id` group
+    traces (an eval run is one session).
     """
     started = time.perf_counter()
     owns_conn = conn is None
     db = conn or connect()
+    metadata = {
+        "answer_model": settings.answer_model,
+        "answer_effort": settings.answer_effort,
+        "retrieval_config": config_hash(),
+    }
     try:
-        result = search(question, params, db, encoder, reranker)
-        sources = expand(db, result.hits) if result.hits else []
-        generation = None
-        if sources:
-            generation = (generate or load_generator())(
-                SYSTEM_PROMPT, build_prompt(question, sources)
+        with telemetry.trace(
+            "answer", input=question, tags=tags, session_id=session_id, metadata=metadata
+        ) as root:
+            with telemetry.observe("retrieve", "retriever", input=question) as span:
+                result = search(question, params, db, encoder, reranker)
+                sources = expand(db, result.hits) if result.hits else []
+                span.update(
+                    output=[
+                        {"provision": provision_label(s.provision), "excerpt": s.excerpt}
+                        for s in sources
+                    ],
+                    metadata={
+                        "chunks": [
+                            {"rank": rank, "chunk_id": h.chunk_id, "citations": list(h.citations)}
+                            for rank, h in enumerate(result.hits, start=1)
+                        ],
+                        "nearest_similarity": result.nearest_similarity,
+                    },
+                )
+            generation = None
+            if sources:
+                generation = _generate(question, sources, generate or load_generator())
+            reply = compose(
+                question,
+                result.hits,
+                sources,
+                generation,
+                round((time.perf_counter() - started) * 1000),
             )
-        reply = compose(
-            question,
-            result.hits,
-            sources,
-            generation,
-            round((time.perf_counter() - started) * 1000),
-        )
+            root.update(
+                output={
+                    "status": reply.status,
+                    "answer": reply.text,
+                    "missing": reply.missing,
+                    "citations": [provision_label(c) for c in reply.citations],
+                },
+                metadata={"downgraded": reply.downgraded, "latency_ms": reply.latency_ms},
+            )
+            root.score_trace(name="status", value=reply.status, data_type="CATEGORICAL")
+            reply = replace(reply, trace_id=root.trace_id)
         if log:
             log_query(db, reply)
     finally:
         if owns_conn:
             db.close()
     return reply
+
+
+def _generate(question: str, sources: Sequence[Source], generate: Generator) -> Generation:
+    """One model call, traced as a Langfuse generation."""
+    user = build_prompt(question, sources)
+    with telemetry.observe(
+        "generate",
+        "generation",
+        model=settings.answer_model,
+        input=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
+        model_parameters={
+            "effort": settings.answer_effort,
+            "max_tokens": settings.answer_max_tokens,
+        },
+    ) as span:
+        generation = generate(SYSTEM_PROMPT, user)
+        cost = cost_usd(generation.model, generation.input_tokens, generation.output_tokens)
+        span.update(
+            output=generation.text,
+            model=generation.model,
+            usage_details={"input": generation.input_tokens, "output": generation.output_tokens},
+            cost_details={"total": 0.0 if generation.cached else (cost or 0.0)},
+            metadata={"stop_reason": generation.stop_reason, "cached": generation.cached},
+        )
+    return generation
 
 
 def log_query(conn: Connection, reply: Answer) -> int:

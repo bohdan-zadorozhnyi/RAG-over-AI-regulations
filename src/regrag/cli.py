@@ -138,7 +138,7 @@ def ask(
     """Retrieve and answer with citations, or refuse."""
     import psycopg
 
-    from regrag import retrieve
+    from regrag import retrieve, telemetry
     from regrag.answer import AnswerError, answer, provision_label
 
     try:
@@ -174,6 +174,10 @@ def ask(
         typer.echo("(the model answered without a valid citation; withheld)")
     if reply.invalid_sources:
         typer.echo(f"(dropped markers naming no retrieved source: {reply.invalid_sources})")
+    url = telemetry.trace_url(reply.trace_id)
+    telemetry.flush()
+    if url:
+        typer.echo(f"trace: {url}")
 
 
 def _print_retrieved(result: "SearchResult", params: "SearchParams") -> None:

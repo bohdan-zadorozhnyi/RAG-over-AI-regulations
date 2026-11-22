@@ -75,3 +75,25 @@ def test_eval_answers_are_not_logged(conn: Connection) -> None:
 
     assert reply.refused and reply.citations == []
     assert conn.execute("SELECT count(*) FROM query_log").fetchone() == before
+
+
+def test_answer_is_traced_when_langfuse_is_on(
+    conn: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from regrag import telemetry
+    from tests.test_telemetry import FakeLangfuse
+
+    fake = FakeLangfuse()
+    monkeypatch.setattr(telemetry, "client", lambda: fake)
+    index_corpus(conn)
+    _, generate = fake_model("Gamma rules apply [1].")
+    reply = answer(
+        "What gamma rules apply?", conn=conn, encoder=topic_encoder, generate=generate, log=False
+    )
+
+    started = [
+        (name, fields.get("as_type")) for kind, name, fields in fake.record if kind == "start"
+    ]
+    assert started == [("answer", "span"), ("retrieve", "retriever"), ("generate", "generation")]
+    assert ("score_trace", "status", {"value": "answer"}) in fake.record
+    assert reply.trace_id == "trace-1"

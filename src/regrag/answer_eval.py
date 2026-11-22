@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from regrag import telemetry
 from regrag.answer import (
     REPLY_SCHEMA,
     Answer,
@@ -68,7 +69,9 @@ class CachedGenerator:
         path = self._dir / f"{self.key(system, user)}.json"
         if path.exists():
             self.last_cached = True
-            return Generation(**json.loads(path.read_text()))
+            stored = json.loads(path.read_text())
+            stored.pop("cached", None)
+            return Generation(**stored, cached=True)
         generation = self._generate(system, user)
         self.api_calls += 1
         self.last_cached = False
@@ -144,6 +147,16 @@ def _mean(values: Sequence[float | None]) -> float | None:
     return sum(present) / len(present) if present else None
 
 
+def _score_trace(r: AnswerResult) -> None:
+    """The eval's verdicts as Langfuse scores on the question's trace."""
+    trace_id = r.answer.trace_id
+    comment = f"{r.question.id}: accepted {'/'.join(r.accepted)}, returned {r.answer.status}"
+    telemetry.score(trace_id, "behaviour_ok", float(r.behaviour_ok), comment)
+    telemetry.score(trace_id, "refusal_ok", float(r.refusal_ok))
+    if r.citation_recall is not None:
+        telemetry.score(trace_id, "citation_recall", r.citation_recall)
+
+
 def summarise(results: Sequence[AnswerResult]) -> AnswerMetrics:
     if not results:
         raise ValueError("no results to summarise")
@@ -201,16 +214,30 @@ def run(
     cached = CachedGenerator(generate or load_generator(), settings.answer_cache_dir)
     encode = encoder or load_encoder()
 
+    # One Langfuse session per run, so a run's traces and scores sit together.
+    question_set = settings.eval_questions_path.stem
+    session = f"eval-answers-{question_set}-{datetime.now(UTC):%Y%m%dT%H%M%S}"
     owns_conn = conn is None
     db = conn or connect()
     results = []
     try:
         for q in questions:
-            reply = answer(q.question, conn=db, encoder=encode, generate=cached, log=False)
-            results.append(AnswerResult(q, reply, cached.last_cached and reply.model is not None))
+            reply = answer(
+                q.question,
+                conn=db,
+                encoder=encode,
+                generate=cached,
+                log=False,
+                tags=["eval", question_set, q.category],
+                session_id=session,
+            )
+            result = AnswerResult(q, reply, cached.last_cached and reply.model is not None)
+            results.append(result)
+            _score_trace(result)
     finally:
         if owns_conn:
             db.close()
+        telemetry.flush()
 
     metrics = summarise(results)
     sha = git_sha()
