@@ -8,7 +8,8 @@ on:
 env:
   REGRAG_DATABASE_URL: postgresql://regrag:regrag@localhost:5432/regrag
   HIT_AT_5_THRESHOLD: "0.70"
-  # No 2.2 GB reranker download in CI; the fixture eval measures fusion logic.
+  # Already the default; kept explicit so CI never downloads the 2.2 GB
+  # reranker if the default changes. The fixture eval measures fusion logic.
   REGRAG_RERANK_MODEL: ""
 
 jobs:

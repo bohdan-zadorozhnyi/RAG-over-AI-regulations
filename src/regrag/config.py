@@ -76,8 +76,11 @@ class Settings(BaseSettings):
 
     # Reranking: a cross-encoder rescores the top rerank_candidates fused
     # chunks (plus the coverage candidates) before the top fusion_top_k are
-    # kept. Runs on embedding_device, in fp32. Empty rerank_model disables it.
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    # kept. Runs on embedding_device, in fp32. Off by default: empty disables
+    # it. Enable with REGRAG_RERANK_MODEL=BAAI/bge-reranker-v2-m3 (measured:
+    # hit@5 0.867 -> 0.933, but search 31 ms -> 4.3 s on an M1 Pro, so it
+    # needs a GPU host to be interactive).
+    rerank_model: str = ""
     rerank_candidates: int = 40
     # Question + header + chunk; chunks are at most chunk_target_tokens.
     rerank_max_length: int = 1024
