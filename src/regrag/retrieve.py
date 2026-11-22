@@ -19,15 +19,64 @@ as chunks.tsv), so the FTS path ranks chunks by query-term overlap. RRF only
 consumes ranks, so it tolerates that noisier ranking.
 """
 
+from dataclasses import dataclass
+
 from pgvector.psycopg import register_vector
 
 from regrag.config import settings
 from regrag.db import Connection, connect
 from regrag.encoder import Encoder, check_model_indexed, load_encoder, query_input
-from regrag.models import Retrieved, SectionKind, select_strategies
+from regrag.models import Retrieved, SearchResult, SectionKind, select_strategies
 
 ALL_KINDS = [k.value for k in SectionKind]
 NON_RECITAL_KINDS = [k.value for k in SectionKind if k is not SectionKind.RECITAL]
+
+
+@dataclass(frozen=True)
+class SearchParams:
+    """The settings an eval matrix varies. Everything else comes from config."""
+
+    strategy: str
+    exclude_recitals: bool
+    fts_rank_normalization: int
+
+    @classmethod
+    def from_settings(
+        cls,
+        strategy: str | None = None,
+        exclude_recitals: bool | None = None,
+        fts_rank_normalization: int | None = None,
+    ) -> "SearchParams":
+        """The shipped configuration, with any given field overridden."""
+        [chosen] = select_strategies(strategy or settings.chunk_strategy)  # not "all"
+        norm = (
+            settings.fts_rank_normalization
+            if fts_rank_normalization is None
+            else fts_rank_normalization
+        )
+        if norm < 0:
+            raise ValueError(f"fts_rank_normalization is a bitmask, got {norm}")
+        return cls(
+            strategy=chosen,
+            exclude_recitals=(
+                settings.exclude_recitals if exclude_recitals is None else exclude_recitals
+            ),
+            fts_rank_normalization=norm,
+        )
+
+    def overrides(self) -> dict[str, object]:
+        """As setting names, for config_hash."""
+        return {
+            "chunk_strategy": self.strategy,
+            "exclude_recitals": self.exclude_recitals,
+            "fts_rank_normalization": self.fts_rank_normalization,
+        }
+
+    @property
+    def label(self) -> str:
+        recitals = "no recitals" if self.exclude_recitals else "recitals"
+        return f"{self.strategy}, {recitals}, norm {self.fts_rank_normalization}"
+
 
 # Session-local pgvector settings, applied inside the search transaction.
 # iterative_scan keeps the HNSW scan going when WHERE filters (model,
@@ -48,7 +97,7 @@ query AS (
     )::tsquery AS tsq  -- NULL when the question is all stopwords
 ),
 vec AS (
-    SELECT chunk_id, row_number() OVER (ORDER BY distance, chunk_id) AS rank
+    SELECT chunk_id, distance, row_number() OVER (ORDER BY distance, chunk_id) AS rank
     FROM (
         SELECT e.chunk_id, e.vector <=> %(qvec)s AS distance
         FROM embeddings e
@@ -82,6 +131,7 @@ fts AS (
 fused AS (
     SELECT coalesce(vec.chunk_id, fts.chunk_id) AS chunk_id,
            vec.rank AS vector_rank,
+           vec.distance,
            fts.rank AS fts_rank,
            coalesce(1.0::float8 / (%(rrf_k)s + vec.rank), 0)
          + coalesce(1.0::float8 / (%(rrf_k)s + fts.rank), 0) AS score
@@ -90,8 +140,9 @@ fused AS (
     LIMIT %(top_n)s
 )
 SELECT f.chunk_id, d.celex, s.article_no, c.header, c.text,
-       f.vector_rank, f.fts_rank, f.score,
-       c.strategy, s.kind, s.path, cited.citations
+       f.vector_rank, f.fts_rank, f.score, 1 - f.distance AS similarity,
+       c.strategy, s.kind, s.path, cited.citations,
+       1 - (SELECT min(distance) FROM vec) AS nearest_similarity
 FROM fused f
 JOIN chunks c ON c.id = f.chunk_id
 JOIN sections s ON s.id = c.section_id
@@ -116,50 +167,49 @@ ORDER BY f.score DESC, f.chunk_id
 
 def search(
     question: str,
-    strategy: str | None = None,
-    exclude_recitals: bool = False,
+    params: SearchParams | None = None,
     conn: Connection | None = None,
     encoder: Encoder | None = None,
-) -> list[Retrieved]:
+) -> SearchResult:
     """Top `fusion_top_k` chunks for a question, fused from vector and full-text.
 
-    Refuses to run if the configured model has no embeddings for the strategy:
-    a question vector compared against another model's vectors returns
-    confident nonsense with no error. `conn` and `encoder` are injectable.
+    `params` defaults to the shipped configuration. Refuses to run if the
+    configured model has no embeddings for the strategy: a question vector
+    compared against another model's vectors returns confident nonsense with
+    no error. `conn` and `encoder` are injectable.
     """
     if not question.strip():
         raise ValueError("empty question")
-    chosen = strategy or settings.chunk_strategy
-    [chosen] = select_strategies(chosen)  # one named strategy, not "all"
+    chosen = params or SearchParams.from_settings()
 
     owns_conn = conn is None
     db = conn or connect()
     try:
         register_vector(db)
-        check_model_indexed(db, settings.embedding_model, chosen)
+        check_model_indexed(db, settings.embedding_model, chosen.strategy)
         encode = encoder or load_encoder()
         query_vector = encode([query_input(question)])[0]
-        params = {
+        sql_params = {
             "question": question,
             "qvec": query_vector,
             "model": settings.embedding_model,
-            "strategy": chosen,
-            "kinds": NON_RECITAL_KINDS if exclude_recitals else ALL_KINDS,
+            "strategy": chosen.strategy,
+            "kinds": NON_RECITAL_KINDS if chosen.exclude_recitals else ALL_KINDS,
             "celex_ids": settings.celex_ids,
             "vector_k": settings.vector_top_k,
             "fts_k": settings.fts_top_k,
-            "norm": settings.fts_rank_normalization,
+            "norm": chosen.fts_rank_normalization,
             "rrf_k": settings.rrf_k,
             "top_n": settings.fusion_top_k,
         }
         with db.transaction():
             db.execute(SET_HNSW, {"ef_search": str(settings.hnsw_ef_search)})
-            rows = db.execute(FUSED_SEARCH, params).fetchall()
+            rows = db.execute(FUSED_SEARCH, sql_params).fetchall()
     finally:
         if owns_conn:
             db.close()
 
-    return [
+    hits = [
         Retrieved(
             chunk_id=chunk_id,
             celex=celex,
@@ -169,6 +219,7 @@ def search(
             vector_rank=vector_rank,
             fts_rank=fts_rank,
             fused_score=float(score),
+            similarity=None if similarity is None else float(similarity),
             strategy=row_strategy,
             kind=SectionKind(kind),
             section_path=path,
@@ -183,12 +234,18 @@ def search(
             vector_rank,
             fts_rank,
             score,
+            similarity,
             row_strategy,
             kind,
             path,
             citations,
+            _nearest,
         ) in rows
     ]
+    # Every row carries the same value, NULL when the vector side is empty. No
+    # rows at all means both sides were empty.
+    nearest = rows[0][-1] if rows else None
+    return SearchResult(hits, None if nearest is None else float(nearest))
 
 
 def reciprocal_rank_fusion(

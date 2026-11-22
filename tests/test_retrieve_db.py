@@ -1,129 +1,63 @@
 """Database tests for search(). The rolled-back `conn` fixture comes from
-conftest.py (skipped without Postgres).
-
-A topic encoder gives words controlled meanings: each topic owns one vector
-dimension, and synonyms share it. That makes it possible to build chunks that
-match a question semantically but not lexically ("primary" vs "alpha"), and
-the reverse, and to check the SQL fusion against the Python reference.
+conftest.py (skipped without Postgres); the corpus and topic encoder from
+topic_corpus.py.
 """
-
-from datetime import UTC, datetime
 
 import numpy as np
 import pytest
 from pgvector.psycopg import register_vector
 
-from regrag.chunk import chunk_all
 from regrag.config import settings
 from regrag.db import Connection
-from regrag.embed import embed_pending
-from regrag.encoder import Vectors
-from regrag.models import RECURSIVE, SECTION_AWARE, Document, Section, SectionKind
-from regrag.parse import store_document
-from regrag.retrieve import reciprocal_rank_fusion, search
-
-TEST_CELEX = "TEST00000"
-MODEL = "test/topic-encoder"
+from regrag.models import RECURSIVE, Retrieved, SearchResult, SectionKind
+from regrag.retrieve import SearchParams, reciprocal_rank_fusion, search
+from tests.topic_corpus import TEST_CELEX, index_corpus, topic_encoder, use_test_settings
 
 COUNT_TEST_CHUNKS = """
 SELECT count(*) FROM chunks c JOIN documents d ON d.id = c.document_id
 WHERE d.celex = %s AND c.strategy = %s
 """
 
-TOPICS = [
-    {"alpha", "primary"},  # synonyms: same dimension
-    {"beta", "secondary"},
-    {"gamma"},
-    {"delta"},
-    {"epsilon"},
-]
-
-
-def topic_encoder(texts: list[str]) -> Vectors:
-    rows = []
-    for text in texts:
-        words = [w.strip(".,:;?()").lower() for w in text.split()]
-        v = np.zeros(settings.embedding_dim, dtype=np.float64)
-        for dim, topic in enumerate(TOPICS):
-            v[dim] = sum(w in topic for w in words)
-        v[-1] = 1e-3  # never a zero vector
-        rows.append(v / np.linalg.norm(v))
-    return np.asarray(rows, dtype=np.float32)
-
-
-def article(n: int, text: str) -> Section:
-    return Section(
-        f"chapter-I/article-{n}/paragraph-1", SectionKind.ARTICLE, str(n), "1", f"Heading {n}", text
-    )
-
-
-CORPUS = [
-    Section("recital-1", SectionKind.RECITAL, None, None, None, "(1) Alpha alpha alpha context."),
-    article(1, "1. Alpha obligations apply."),
-    article(2, "1. Beta duties apply."),
-    article(3, "1. Gamma rules apply."),
-    article(4, "1. Delta reporting apply."),
-    article(5, "1. Epsilon notices apply."),
-    article(6, "1. Alpha and beta together."),
-]
-
 
 @pytest.fixture(autouse=True)
 def test_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name, value in {
-        "celex_ids": [TEST_CELEX],
-        "document_titles": {TEST_CELEX: "Test Act"},
-        "embedding_model": MODEL,
-        "chunk_target_tokens": 12,
-        "chunk_overlap_tokens": 2,
-        "chunk_strategy": SECTION_AWARE,
-        "vector_top_k": 20,
-        "fts_top_k": 20,
-        "fusion_top_k": 50,  # large: every candidate is returned, for exact comparisons
-    }.items():
-        monkeypatch.setattr(settings, name, value)
+    use_test_settings(monkeypatch)
 
 
 @pytest.fixture
 def indexed(conn: Connection) -> Connection:
-    store_document(
-        conn,
-        Document(
-            TEST_CELEX,
-            "Test Act",
-            "https://example.test",
-            "v1",
-            datetime(2026, 11, 21, tzinfo=UTC),
-            1,
-        ),
-        CORPUS,
-    )
-    chunk_all(conn=conn, count=lambda t: len(t.split()))
-    embed_pending(conn=conn, encoder=topic_encoder)
-    return conn
+    return index_corpus(conn)
+
+
+def run(conn: Connection, question: str, **overrides: object) -> SearchResult:
+    params = SearchParams.from_settings(**overrides)  # type: ignore[arg-type]
+    return search(question, params, conn=conn, encoder=topic_encoder)
+
+
+def hits(conn: Connection, question: str, **overrides: object) -> list[Retrieved]:
+    return run(conn, question, **overrides).hits
 
 
 def test_sql_fusion_matches_the_python_reference(indexed: Connection) -> None:
-    hits = search("alpha gamma obligations", conn=indexed, encoder=topic_encoder)
-    vector = [(h.chunk_id, h.vector_rank) for h in hits if h.vector_rank is not None]
-    fts = [(h.chunk_id, h.fts_rank) for h in hits if h.fts_rank is not None]
+    found = hits(indexed, "alpha gamma obligations")
+    vector = [(h.chunk_id, h.vector_rank) for h in found if h.vector_rank is not None]
+    fts = [(h.chunk_id, h.fts_rank) for h in found if h.fts_rank is not None]
 
-    expected = reciprocal_rank_fusion([vector, fts], k=settings.rrf_k, top_n=len(hits))
+    expected = reciprocal_rank_fusion([vector, fts], k=settings.rrf_k, top_n=len(found))
 
-    assert [h.chunk_id for h in hits] == [chunk_id for chunk_id, _ in expected]
-    for hit, (_, score) in zip(hits, expected, strict=True):
+    assert [h.chunk_id for h in found] == [chunk_id for chunk_id, _ in expected]
+    for hit, (_, score) in zip(found, expected, strict=True):
         assert hit.fused_score == pytest.approx(score)
 
 
 def test_respects_fusion_top_k(indexed: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "fusion_top_k", 3)
-    assert len(search("alpha", conn=indexed, encoder=topic_encoder)) == 3
+    assert len(hits(indexed, "alpha")) == 3
 
 
 def test_semantic_only_match_comes_from_the_vector_side(indexed: Connection) -> None:
     # "primary" shares alpha's topic but appears in no chunk text
-    hits = search("primary", conn=indexed, encoder=topic_encoder)
-    top = hits[0]
+    top = hits(indexed, "primary")[0]
     assert top.fts_rank is None and top.vector_rank == 1
     assert "lpha" in top.text
 
@@ -132,26 +66,70 @@ def test_lexical_only_match_survives_the_outer_join(
     indexed: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings, "vector_top_k", 1)  # vector side: one alpha chunk only
-    hits = search("alpha epsilon", conn=indexed, encoder=topic_encoder)
-    epsilon = next(h for h in hits if "Epsilon" in h.text)
+    epsilon = next(h for h in hits(indexed, "alpha epsilon") if "Epsilon" in h.text)
     assert epsilon.fts_rank is not None
+    assert epsilon.vector_rank is None and epsilon.similarity is None
 
 
 def test_all_stopword_question_falls_back_to_vectors(indexed: Connection) -> None:
-    hits = search("what is it?", conn=indexed, encoder=topic_encoder)
-    assert hits and all(h.fts_rank is None for h in hits)
+    found = hits(indexed, "what is it?")
+    assert found and all(h.fts_rank is None for h in found)
+
+
+def test_similarity_is_cosine_and_nearest_is_vector_rank_one(indexed: Connection) -> None:
+    result = run(indexed, "alpha gamma obligations")
+    vector_hits = sorted(
+        (h for h in result.hits if h.vector_rank is not None), key=lambda h: h.vector_rank or 0
+    )
+    sims = [h.similarity for h in vector_hits]
+    assert all(s is not None and -1.0 <= s <= 1.0 for s in sims)
+    assert sims == sorted(sims, reverse=True)  # vector rank follows similarity
+    assert result.nearest_similarity == pytest.approx(vector_hits[0].similarity)
+
+
+def test_nearest_similarity_survives_fusion_dropping_vector_rank_one(
+    indexed: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    full = run(indexed, "alpha gamma obligations")
+    monkeypatch.setattr(settings, "fusion_top_k", 1)
+    top_only = run(indexed, "alpha gamma obligations")
+    assert top_only.nearest_similarity == pytest.approx(full.nearest_similarity)
 
 
 def test_exclude_recitals(indexed: Connection) -> None:
-    with_recitals = search("alpha", conn=indexed, encoder=topic_encoder)
-    without = search("alpha", exclude_recitals=True, conn=indexed, encoder=topic_encoder)
+    with_recitals = hits(indexed, "alpha")
+    without = hits(indexed, "alpha", exclude_recitals=True)
     assert any(h.kind is SectionKind.RECITAL for h in with_recitals)
     assert without and all(h.kind is not SectionKind.RECITAL for h in without)
 
 
+def test_exclude_recitals_default_comes_from_settings(
+    indexed: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "exclude_recitals", True)
+    assert all(h.kind is not SectionKind.RECITAL for h in hits(indexed, "alpha"))
+    assert any(
+        h.kind is SectionKind.RECITAL for h in hits(indexed, "alpha", exclude_recitals=False)
+    )
+
+
+@pytest.mark.parametrize("norm", [1, 2])
+def test_rank_normalization_reaches_ts_rank(indexed: Connection, norm: int) -> None:
+    # Articles 1 and 6 each contain "alpha" once, so unnormalised ts_rank ties
+    # them and chunk id order puts Article 1 first. Article 6 has fewer
+    # lexemes ("and" is a stopword), so dividing by length puts it ahead.
+    def text_order(n: int) -> list[str]:
+        found = [h for h in hits(indexed, "alpha", fts_rank_normalization=n) if h.fts_rank]
+        return [h.section_path for h in sorted(found, key=lambda h: h.fts_rank or 0)]
+
+    article_1, article_6 = "chapter-I/article-1/paragraph-1", "chapter-I/article-6/paragraph-1"
+    assert text_order(0) == ["recital-1", article_1, article_6]
+    assert text_order(norm) == ["recital-1", article_6, article_1]
+
+
 def test_strategy_filter(indexed: Connection) -> None:
-    hits = search("alpha", strategy=RECURSIVE, conn=indexed, encoder=topic_encoder)
-    assert hits and all(h.strategy == RECURSIVE and h.header == "" for h in hits)
+    found = hits(indexed, "alpha", strategy=RECURSIVE)
+    assert found and all(h.strategy == RECURSIVE and h.header == "" for h in found)
 
 
 def test_vector_side_returns_every_candidate_under_filters(indexed: Connection) -> None:
@@ -163,21 +141,19 @@ def test_vector_side_returns_every_candidate_under_filters(indexed: Connection) 
     assert row is not None
     expected = min(int(row[0]), settings.vector_top_k)
 
-    hits = search("alpha", strategy=RECURSIVE, conn=indexed, encoder=topic_encoder)
+    found = hits(indexed, "alpha", strategy=RECURSIVE)
 
-    assert sum(h.vector_rank is not None for h in hits) == expected
+    assert sum(h.vector_rank is not None for h in found) == expected
 
 
 def test_section_aware_cites_one_provision(indexed: Connection) -> None:
-    hits = search("alpha", conn=indexed, encoder=topic_encoder)
-    by_path = {h.section_path: h for h in hits}
+    by_path = {h.section_path: h for h in hits(indexed, "alpha")}
     assert by_path["chapter-I/article-1/paragraph-1"].citations == (f"{TEST_CELEX}:1",)
     assert by_path["recital-1"].citations == (f"{TEST_CELEX}:Recital 1",)
 
 
 def test_baseline_chunk_cites_every_article_it_spans(indexed: Connection) -> None:
-    hits = search("alpha beta", strategy=RECURSIVE, conn=indexed, encoder=topic_encoder)
-    spanning = [h for h in hits if len(h.citations) > 1]
+    spanning = [h for h in hits(indexed, "alpha beta", strategy=RECURSIVE) if len(h.citations) > 1]
     assert spanning, "small budgets should make baseline chunks straddle articles"
     for hit in spanning:
         assert all(c.startswith(f"{TEST_CELEX}:") for c in hit.citations)
@@ -189,7 +165,7 @@ def test_refuses_when_model_has_no_embeddings(
 ) -> None:
     monkeypatch.setattr(settings, "embedding_model", "amazon.titan-embed-text-v2")
     with pytest.raises(ValueError, match="no section_aware embeddings"):
-        search("alpha", conn=indexed, encoder=topic_encoder)
+        hits(indexed, "alpha")
 
 
 @pytest.mark.parametrize("question", ["", "   "])
@@ -198,9 +174,17 @@ def test_empty_question_raises(conn: Connection, question: str) -> None:
         search(question, conn=conn, encoder=topic_encoder)
 
 
-def test_all_is_not_a_search_strategy(indexed: Connection) -> None:
+def test_params_default_to_settings_and_take_overrides() -> None:
+    shipped = SearchParams.from_settings()
+    assert shipped == SearchParams(settings.chunk_strategy, False, 0)
+    assert SearchParams.from_settings(RECURSIVE, True, 2) == SearchParams(RECURSIVE, True, 2)
+    assert shipped.label == "section_aware, recitals, norm 0"
+
+
+@pytest.mark.parametrize("bad", [{"strategy": "all"}, {"fts_rank_normalization": -1}])
+def test_params_reject_invalid_values(bad: dict[str, object]) -> None:
     with pytest.raises(ValueError):
-        search("alpha", strategy="all", conn=indexed, encoder=topic_encoder)
+        SearchParams.from_settings(**bad)  # type: ignore[arg-type]
 
 
 # --- against the real corpus (skipped unless make embed has run) ----------
@@ -237,11 +221,11 @@ def test_real_baseline_search_fills_vector_top_k(
     }.items():
         monkeypatch.setattr(settings, name, value)
 
-    hits = search(
+    found = search(
         "risk management system",
-        strategy=RECURSIVE,
+        SearchParams.from_settings(RECURSIVE),
         conn=conn,
         encoder=lambda texts: np.asarray([stored] * len(texts)),
-    )
+    ).hits
 
-    assert sum(h.vector_rank is not None for h in hits) == settings.vector_top_k
+    assert sum(h.vector_rank is not None for h in found) == settings.vector_top_k

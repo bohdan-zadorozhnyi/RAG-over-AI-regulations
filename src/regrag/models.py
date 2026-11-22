@@ -38,7 +38,7 @@ class Document:
 
 @dataclass(frozen=True)
 class Section:
-    path: str           # e.g. "chapter-3/section-2/article-9"
+    path: str  # e.g. "chapter-3/section-2/article-9"
     kind: SectionKind
     article_no: str | None
     paragraph_no: str | None
@@ -48,11 +48,11 @@ class Section:
 
 @dataclass(frozen=True)
 class Chunk:
-    section_path: str   # the section the chunk starts in
+    section_path: str  # the section the chunk starts in
     ordinal: int
-    header: str         # "AI Act, Chapter III, Article 9: Risk management, para 2"
+    header: str  # "AI Act, Chapter III, Article 9: Risk management, para 2"
     text: str
-    token_count: int    # of the embedded text: header + newline + text
+    token_count: int  # of the embedded text: header + newline + text
     content_hash: str
     covers: tuple[str, ...]  # every section path the text overlaps, in order
 
@@ -67,6 +67,7 @@ class Retrieved:
     vector_rank: int | None  # None: not in the vector top-k
     fts_rank: int | None  # None: not in the full-text top-k
     fused_score: float
+    similarity: float | None  # cosine similarity to the question; None: full-text only
     strategy: str
     kind: SectionKind  # of the section the chunk starts in
     section_path: str
@@ -74,3 +75,13 @@ class Retrieved:
     # "32024R1689:Annex III", "32024R1689:Recital 12". One for section-aware
     # chunks; possibly several for baseline chunks.
     citations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    hits: list[Retrieved]
+    # Cosine similarity of the closest chunk in scope: the vector side's rank 1,
+    # which fusion can push out of `hits`. The one absolute relevance signal
+    # (fused scores depend only on ranks); eval measures how well it separates
+    # in-scope from out-of-scope questions. None when nothing is in scope.
+    nearest_similarity: float | None

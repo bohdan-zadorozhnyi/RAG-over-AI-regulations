@@ -1,56 +1,463 @@
-# 40 questions total, 10 per category. Ten examples below — write the rest
-# yourself; doing so is how you learn the corpus, which is half the point.
+# Eval set: 40 questions, 10 per category.
 #
-# expected_articles: identifiers a correct retrieval must surface.
-# Format: "<celex>:<article_no>". Empty list means the corpus should NOT
-# answer and a refusal is the correct behaviour.
+# CONVENTIONS
+#
+# expected_articles: the MINIMAL SUFFICIENT set — provisions a correct answer
+#   must cite. Not every article that touches the topic. Listing merely-related
+#   provisions makes recall_at_5 unachievable by construction.
+#   Format "<celex>:<article_no>" exactly as the parser stores article_no:
+#   articles "32024R1689:9", annexes "32024R1689:Annex III". Identifiers come
+#   from the pipeline's data model, never from the source markup; the loader
+#   rejects any that are not in the parsed corpus.
+#   An empty list means the corpus does not answer it.
+#
+# expected_behaviour: what a correct answer does (scored in step 7).
+#   answer — answer from the corpus, citing expected_articles
+#   scoped — answer the part the corpus supports, say plainly what it does not
+#   refuse — the corpus does not answer it
+#
+# tier (out_of_scope only):
+#   A — the instrument is absent from the corpus
+#   B — the instrument IS named in the corpus (so lexical search returns
+#       confident matches) but its substantive requirements are not
+#
+# collision: true marks direct_lookup questions written to fail until a
+#   structural article-reference lookup exists. The report shows
+#   direct_lookup with and without them.
+#
+# CELEX: 32024R1689 = AI Act | 32016R0679 = GDPR | 32022R2554 = DORA
+#
+# Difficulty is deliberately mixed within each category. A category that
+# saturates at 1.0 cannot detect regression.
+#
+# Expected articles are checked against the parsed corpus on every eval run.
+
+# ============================================================
+# DIRECT LOOKUP — the question names a provision explicitly
+# ============================================================
 
 - id: dl-01
   category: direct_lookup
   question: What does Article 9 of the AI Act require of high-risk AI systems?
   expected_articles: ["32024R1689:9"]
+  expected_behaviour: answer
+  notes: Baseline easy case. Article title is "Risk management system".
 
 - id: dl-02
   category: direct_lookup
   question: What are the record-keeping requirements in Article 12 of the AI Act?
   expected_articles: ["32024R1689:12"]
+  expected_behaviour: answer
+  notes: Easy. Pairs with ob-08, which asks the same subject without a number.
 
 - id: dl-03
   category: direct_lookup
   question: What rights does GDPR Article 17 grant?
   expected_articles: ["32016R0679:17"]
+  expected_behaviour: answer
+  notes: |
+    Paired with dl-07. Article 17 exists in all three regulations: GDPR 17 is
+    right to erasure, AI Act 17 is quality management system, DORA 17 is
+    ICT-related incident management. Getting both dl-03 and dl-07 right means
+    the system disambiguates by instrument, not by number alone.
+
+- id: dl-04
+  category: direct_lookup
+  question: GDPR Art. 35 — what does it oblige a controller to do?
+  expected_articles: ["32016R0679:35"]
+  expected_behaviour: answer
+  notes: Abbreviated "Art." form; tests reference-pattern robustness.
+
+- id: dl-05
+  category: direct_lookup
+  question: Under DORA's Article 30, what has to appear in a contract with an ICT provider?
+  expected_articles: ["32022R2554:30"]
+  expected_behaviour: answer
+  notes: |
+    Possessive phrasing. Collides with GDPR 30 (records of processing), which
+    is also about documentation obligations — confusable semantically as well
+    as numerically.
+
+- id: dl-06
+  category: direct_lookup
+  question: What does Annex III of the AI Act list?
+  expected_articles: ["32024R1689:Annex III"]
+  expected_behaviour: answer
+  notes: |
+    Only annex question. Annex III is the high-risk use-case list referred to
+    in Article 6(2). Retrieving Article 6 instead is a near-miss, not a hit —
+    tests that annexes are indexed as retrievable units.
+
+- id: dl-07
+  category: direct_lookup
+  question: Under the AI Act, what does Article 17 cover?
+  expected_articles: ["32024R1689:17"]
+  expected_behaviour: answer
+  collision: true
+  notes: |
+    HARD. The famous Article 17 is GDPR's right to be forgotten, so lexical
+    and semantic signal both pull toward the wrong instrument. Expect this to
+    fail before the structural article-reference ranking exists.
+
+- id: dl-08
+  category: direct_lookup
+  question: What does Article 12 of DORA require?
+  expected_articles: ["32022R2554:12"]
+  expected_behaviour: answer
+  collision: true
+  notes: |
+    HARD. Three-way collision: AI Act 12 record-keeping, GDPR 12 transparent
+    information, DORA 12 backup policies. All three are substantive.
+
+- id: dl-09
+  category: direct_lookup
+  question: Which practices does Article 5 of the AI Act prohibit?
+  expected_articles: ["32024R1689:5"]
+  expected_behaviour: answer
+  notes: Also a three-way collision number, but the verb "prohibit" disambiguates.
+
+- id: dl-10
+  category: direct_lookup
+  question: Which AI systems does Article 50 of the AI Act impose transparency duties on?
+  expected_articles: ["32024R1689:50"]
+  expected_behaviour: answer
+  notes: No collision. Phrased as "which ... on" rather than "what does X require".
+
+# ============================================================
+# OBLIGATION — "what must X do", in my words not the article's
+# ============================================================
 
 - id: ob-01
   category: obligation
-  question: What must a provider of a high-risk AI system document before placing it on the market?
-  expected_articles: ["32024R1689:11", "32024R1689:18"]
+  question: >-
+    Before a high-risk AI system can go on the market, what paperwork does the
+    company that built it have to produce?
+  expected_articles: ["32024R1689:11"]
+  expected_behaviour: answer
+  notes: |
+    Avoids "technical documentation", the article's own phrase. Annex IV
+    specifies the contents but a correct answer need only cite Article 11.
 
 - id: ob-02
   category: obligation
-  question: What transparency information must be given to people interacting with an AI system?
+  question: What has to be disclosed to someone who is interacting with an AI system?
   expected_articles: ["32024R1689:50"]
+  expected_behaviour: answer
+  notes: Semantic twin of dl-10 without the article number. Compare the two scores.
 
 - id: ob-03
   category: obligation
   question: How quickly must a financial entity report a major ICT-related incident?
   expected_articles: ["32022R2554:19"]
+  expected_behaviour: answer
+  notes: |
+    The category's easy anchor: uses the article's own phrase ("major
+    ICT-related incident") on purpose, unlike the rest of the category.
+    Article 19 is the reporting obligation.
+
+- id: ob-04
+  category: obligation
+  question: >-
+    When does an organisation have to assess the privacy risk of a project
+    before it starts, rather than after?
+  expected_articles: ["32016R0679:35"]
+  expected_behaviour: answer
+  notes: |
+    Deliberately avoids "data protection impact assessment" and "DPIA".
+    Semantic twin of dl-04. If dl-04 scores well and this does not, the
+    lexical path is carrying the category.
+
+- id: ob-05
+  category: obligation
+  question: >-
+    What does a bank have to write down about how often it copies its data and
+    how it would get systems running again?
+  expected_articles: ["32022R2554:12"]
+  expected_behaviour: answer
+  notes: |
+    Plain-language framing of DORA's backup obligation. Pairs with dl-08:
+    same article, one question names it, one describes it.
+
+- id: ob-06
+  category: obligation
+  question: >-
+    If a bank runs a critical system on someone else's cloud, who carries the
+    compliance responsibility?
+  expected_articles: ["32022R2554:28"]
+  expected_behaviour: answer
+  notes: |
+    Article 28(1)(a) states the entity remains fully responsible. Tests
+    retrieval of a principle rather than a list.
+
+- id: ob-07
+  category: obligation
+  question: >-
+    A company buys in a high-risk AI system instead of building one. What is it
+    on the hook for?
+  expected_articles: ["32024R1689:26"]
+  expected_behaviour: answer
+  notes: Avoids "deployer", the AI Act's term for this role. Idiomatic phrasing.
+
+- id: ob-08
+  category: obligation
+  question: >-
+    How long must the company that built a high-risk AI system keep the event
+    logs the system produces?
+  expected_articles: ["32024R1689:19"]
+  expected_behaviour: answer
+  notes: |
+    HARD, and the point of the question. Article 12 creates the logging
+    capability; Article 19 sets retention (at least six months) for providers.
+    Retrieving 12 is the plausible wrong answer. Scoped to the provider:
+    Article 26(6) imposes the same retention on deployers, and asking "who
+    keeps them" would need both. One question, one job: 12 against 19.
+
+- id: ob-09
+  category: obligation
+  question: What standards must the data used to train a high-risk AI system meet?
+  expected_articles: ["32024R1689:10"]
+  expected_behaviour: answer
+  notes: Pairs with cd-01, which asks the same subject against the GDPR.
+
+- id: ob-10
+  category: obligation
+  question: >-
+    When does a company have to tell the affected individuals about a data
+    breach, rather than only the regulator?
+  expected_articles: ["32016R0679:34"]
+  expected_behaviour: answer
+  notes: |
+    Article 33 is notification to the supervisory authority, 34 to data
+    subjects. "Rather than only the regulator" is the discriminating clause —
+    retrieving 33 means the discriminator was missed.
+
+# ============================================================
+# CROSS-DOCUMENT — spans two or more regulations
+# ============================================================
 
 - id: cd-01
   category: cross_document
-  question: How do GDPR data minimisation duties interact with AI Act training data governance?
+  question: >-
+    How do data minimisation duties interact with the requirement for
+    representative AI training data?
   expected_articles: ["32016R0679:5", "32024R1689:10"]
+  expected_behaviour: answer
+  notes: |
+    The step 5 probe returned no GDPR results at all for this subject. Kept
+    deliberately. This question is the category's canary.
 
 - id: cd-02
   category: cross_document
-  question: If an AI system processes personal data and fails, which incident reporting duties apply?
+  question: >-
+    An AI system that processes customer data fails at a bank. Which incident
+    reporting duties are triggered?
   expected_articles: ["32016R0679:33", "32024R1689:73", "32022R2554:19"]
+  expected_behaviour: answer
+  notes: |
+    Three regulations, three clocks. The set's only three-article item and its
+    hardest recall_at_5; expect roughly 1/3 before fusion improves.
+
+- id: cd-03
+  category: cross_document
+  question: >-
+    A bank declines a loan using an AI model. What must the applicant be told,
+    and what can they insist on?
+  expected_articles: ["32016R0679:22", "32024R1689:86"]
+  expected_behaviour: answer
+  notes: |
+    GDPR 22 (automated individual decision-making) and AI Act 86 (right to
+    explanation of individual decision-making) — near-identical titles across
+    instruments. Strong fusion test.
+
+- id: cd-04
+  category: cross_document
+  question: >-
+    A provider must keep its high-risk AI system's logs for a minimum period,
+    while personal data must not be kept longer than necessary. How do those
+    requirements sit together?
+  expected_articles: ["32024R1689:19", "32016R0679:5"]
+  expected_behaviour: answer
+  notes: |
+    A real tension, neither side answerable alone: Article 19(1) sets at least
+    six months "unless provided otherwise in ... Union law on the protection of
+    personal data", and GDPR 5(1)(e) is storage limitation. Scoped to the
+    provider for the same reason as ob-08 (Article 26(6) is the deployer twin).
+    Replaces a human-oversight question where GDPR 22 carried the whole answer.
+
+- id: cd-05
+  category: cross_document
+  question: >-
+    Our AI vendor is both an ICT third party and handles personal data. What
+    must the contract cover?
+  expected_articles: ["32022R2554:30", "32016R0679:28"]
+  expected_behaviour: answer
+  notes: |
+    DORA key contractual provisions and GDPR processor terms. Uses "our",
+    matching how someone at work would actually ask.
+
+- id: cd-06
+  category: cross_document
+  question: >-
+    For an AI system used by a bank, which authority carries out market
+    surveillance, and is it the same one that handles data protection?
+  expected_articles: ["32024R1689:74", "32016R0679:51"]
+  expected_behaviour: answer
+  notes: |
+    AI Act 74(6): for AI systems used by financial institutions, the market
+    surveillance authority is the national financial supervisor. GDPR 51 is
+    the data protection supervisory authority. Article 70 (Member States
+    designate authorities) is a legitimate near-miss, not the answer.
+
+- id: cd-07
+  category: cross_document
+  question: >-
+    What inventory of processing activities is required, and what separate
+    records does a high-risk AI system need?
+  expected_articles: ["32016R0679:30", "32024R1689:12"]
+  expected_behaviour: answer
+  notes: Two documentation regimes that sound alike and are not the same thing.
+
+- id: cd-08
+  category: cross_document
+  question: >-
+    What technical security measures are mandated for personal data, and what
+    for a financial entity's ICT systems?
+  expected_articles: ["32016R0679:32", "32022R2554:9"]
+  expected_behaviour: answer
+  notes: GDPR security of processing against DORA protection and prevention.
+
+- id: cd-09
+  category: cross_document
+  question: How do the maximum fines under the AI Act compare with the GDPR's?
+  expected_articles: ["32024R1689:99", "32016R0679:83"]
+  expected_behaviour: answer
+  notes: |
+    Both are penalty provisions with percentage-of-turnover language, so
+    lexical signal is strong for both — should be among the easier
+    cross-document items.
+
+- id: cd-10
+  category: cross_document
+  question: >-
+    Can personal data gathered for one purpose be reused to develop an AI
+    system in a regulatory sandbox?
+  expected_articles: ["32024R1689:59", "32016R0679:6"]
+  expected_behaviour: answer
+  notes: |
+    AI Act 59 permits it only for public-interest systems, so the honest
+    answer is conditional. Tests whether retrieval surfaces the limiting
+    condition rather than just the permission.
+
+# ============================================================
+# OUT OF SCOPE — the corpus does not answer the question
+#
+# Tier B is the real test — retrieval will succeed and the system must still
+# refuse, or answer only the part the corpus supports (scoped).
+# Mentions counted as sections of the parsed corpus, 2026-11-22.
+# ============================================================
 
 - id: oos-01
   category: out_of_scope
-  question: What is the corporate tax rate in Poland?
+  question: What capital requirements apply to crypto-asset service providers?
   expected_articles: []
+  expected_behaviour: refuse
+  tier: B
+  notes: |
+    MiCA is in scope of DORA but not in the corpus. DORA never uses the label
+    "MiCA"; it spells out "the Regulation on markets in crypto-assets" in five
+    sections (Art. 2(1)(f), 3(55)-(56), 46(d)) — so lexical retrieval matches.
+    Capital requirements are not there.
 
 - id: oos-02
   category: out_of_scope
-  question: Which cloud provider should I use to host a vector database?
+  question: What are the rules for the EU digital identity wallet?
   expected_articles: []
+  expected_behaviour: refuse
+  tier: A
+  notes: eIDAS 2 (2024/1183) and eIDAS (910/2014) — no section mentions either, or an identity wallet.
+
+- id: oos-03
+  category: out_of_scope
+  question: Does the UK GDPR permit the same international transfer mechanisms?
+  expected_articles: []
+  expected_behaviour: refuse
+  tier: A
+  notes: |
+    Adjacent: GDPR Chapter V on transfers will retrieve strongly. The UK
+    instrument is not in the corpus. Tests jurisdiction awareness. Refuse
+    rather than scoped: the question is a comparison, and the EU half alone
+    cannot answer "the same".
+
+- id: oos-04
+  category: out_of_scope
+  question: What is the maximum GDPR fine under Polish national law?
+  expected_articles: []
+  expected_behaviour: scoped
+  tier: B
+  notes: |
+    GDPR 83 gives EU-level ceilings and will retrieve with high confidence,
+    but Polish national specifics are not in the corpus. Correct output: the
+    EU ceiling under Article 83, plus a plain statement that Polish law is not
+    in the corpus.
+
+- id: oos-05
+  category: out_of_scope
+  question: Which Polish authority enforces the AI Act?
+  expected_articles: []
+  expected_behaviour: scoped
+  tier: B
+  notes: |
+    AI Act 70 requires Member States to designate authorities but names none.
+    Correct output: Member States designate (Article 70); Poland's designation
+    is not in the corpus. A confident wrong answer is the failure mode.
+
+- id: oos-06
+  category: out_of_scope
+  question: What incident reporting thresholds does NIS2 set for essential entities?
+  expected_articles: []
+  expected_behaviour: refuse
+  tier: B
+  notes: |
+    Strongest in the set. Directive (EU) 2022/2555 is cited in 28 DORA
+    sections and DORA Article 47 is titled cooperation with NIS2 structures —
+    so lexical retrieval returns plenty. NIS2's own thresholds are not there.
+
+- id: oos-07
+  category: out_of_scope
+  question: What are PSD2's strong customer authentication requirements?
+  expected_articles: []
+  expected_behaviour: refuse
+  tier: B
+  notes: |
+    Directive (EU) 2015/2366 is cited in 12 DORA sections, and DORA 23 covers
+    payment-related incidents. SCA rules are not in the corpus.
+
+- id: oos-08
+  category: out_of_scope
+  question: What does the Data Act require about sharing data from connected devices?
+  expected_articles: []
+  expected_behaviour: refuse
+  tier: B
+  notes: Regulation 2023/2854 cited in one AI Act section, substance absent.
+
+- id: oos-09
+  category: out_of_scope
+  question: Which embedding model performs best on legal document retrieval?
+  expected_articles: []
+  expected_behaviour: refuse
+  tier: A
+  notes: |
+    Control question, fully off-domain. If this one ever fails to refuse, the
+    refusal mechanism is broken rather than merely imprecise.
+
+- id: oos-10
+  category: out_of_scope
+  question: What amendments to the AI Act are planned for 2027?
+  expected_articles: []
+  expected_behaviour: scoped
+  tier: B
+  notes: |
+    Article 112 (evaluation and review) sets a review timetable and will
+    retrieve, but no planned amendments exist in the text. Correct output: a
+    review is scheduled (Article 112), and what will change is not in the
+    corpus.

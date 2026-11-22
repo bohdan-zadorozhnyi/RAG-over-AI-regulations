@@ -63,6 +63,18 @@ Forty questions, ten per category, in `data/eval/questions.yaml`:
 
 Each carries expected article identifiers. That is the ground truth.
 
+Metrics, in three tiers that stay separate in the report:
+
+- Gate: `hit_at_5` on the shipped `config.py` combination; CI also fails
+  unless all 40 questions ran
+- Quality: `recall_at_5` (per category; hit@5 is too generous for
+  cross_document), MRR, and separation AUC of nearest-chunk similarity,
+  in-scope versus out_of_scope
+- Descriptive: provisions per retrieved chunk, latency, chunk counts
+
+Matrix: strategy × exclude_recitals × fts_rank_normalization {0, 1, 2}.
+Refusal accuracy is measured in step 7, where refusal happens.
+
 ## Cut list, in order
 
 1. FastAPI endpoint and any UI

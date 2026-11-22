@@ -55,6 +55,10 @@ jobs:
 
       - name: Enforce retrieval threshold
         run: |
+          # A partial question set passes vacuously; regrag eval already refuses
+          # one, and this re-checks the file the gate reads.
+          read N E < <(uv run python -c "import json;m=json.load(open('eval-metrics.json'));print(m['n_questions'],m['expected_questions'])")
+          [ "$N" = "$E" ] || { echo "::error::eval ran $N of $E questions"; exit 1; }
           HIT=$(uv run python -c "import json;print(json.load(open('eval-metrics.json'))['hit_at_5'])")
           echo "hit@5 = $HIT (threshold $HIT_AT_5_THRESHOLD)"
           awk -v h="$HIT" -v t="$HIT_AT_5_THRESHOLD" 'BEGIN{exit !(h>=t)}' \

@@ -1,5 +1,8 @@
 """All tunables. Nothing else in the codebase holds a literal for these."""
 
+import hashlib
+import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -60,6 +63,8 @@ class Settings(BaseSettings):
     # 1 + log(length), 2 divide by length. Long recitals win under 0; an eval
     # matrix dimension, not a judgement call.
     fts_rank_normalization: int = 0
+    # Recitals explain intent but are not binding. Also an eval matrix dimension.
+    exclude_recitals: bool = False
     # HNSW candidates examined per vector search (pgvector default 40). Must be
     # at least vector_top_k; iterative scans extend it when filters drop rows.
     hnsw_ef_search: int = 100
@@ -69,6 +74,13 @@ class Settings(BaseSettings):
     answer_model: str = "anthropic.claude-sonnet-4-5-20250929-v1:0"
 
     langfuse_enabled: bool = False
+
+    # Eval (defines the eval, not a retrieval configuration: keep out of config_hash)
+    eval_questions_path: Path = Path("data/eval/questions.yaml")
+    eval_questions_per_category: int = 10
+    # ts_rank flags the matrix compares. 32 is left out: rank/(rank+1) is
+    # monotone, so it cannot change the order.
+    eval_fts_rank_normalizations: list[int] = [0, 1, 2]
 
     @model_validator(mode="after")
     def _every_celex_has_a_title(self) -> "Settings":
@@ -81,6 +93,39 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-def config_hash() -> str:
-    """Stable hash of retrieval-affecting settings, recorded on every eval run."""
-    raise NotImplementedError
+# Settings that cannot change what retrieval returns. Everything else is
+# hashed, so a retrieval setting added later changes the hash by default
+# instead of being silently left out. Device is excluded as a property of the
+# machine; fp32 vectors differ across devices only in the last bits.
+_NOT_HASHED = frozenset(
+    {
+        "database_url",
+        "raw_dir",
+        "http_timeout_s",
+        "http_retries",
+        "http_user_agent",
+        "embedding_batch_size",
+        "embedding_device",
+        "answer_provider",
+        "answer_model",
+        "langfuse_enabled",
+        "eval_questions_path",
+        "eval_questions_per_category",
+        "eval_fts_rank_normalizations",
+    }
+)
+
+
+def config_hash(overrides: Mapping[str, object] | None = None) -> str:
+    """Stable hash of retrieval-affecting settings, recorded on every eval run.
+
+    `overrides` replaces setting values first: an eval matrix combination is
+    the shipped settings with a few fields changed.
+    """
+    values = settings.model_dump(mode="json", exclude=set(_NOT_HASHED))
+    unknown = set(overrides or {}) - values.keys()
+    if unknown:
+        raise ValueError(f"not hashed settings: {sorted(unknown)}")
+    values.update(overrides or {})
+    encoded = json.dumps(values, sort_keys=True, default=str).encode()
+    return hashlib.sha256(encoded).hexdigest()[:16]
