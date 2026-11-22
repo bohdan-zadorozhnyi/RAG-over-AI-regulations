@@ -397,6 +397,16 @@ def test_metrics_json_gates_on_the_shipped_combination(tmp_path: Path) -> None:
     assert set(data["by_config"]) == {SHIPPED.label, BEST.label}
 
 
+def test_metrics_json_names_the_question_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The held-out set writes the same JSON; the file must say which set it is.
+    monkeypatch.setattr(settings, "eval_questions_path", Path("data/eval/heldout.yaml"))
+    path = tmp_path / "m.json"
+    write_metrics_json([run_result(SHIPPED, 0.7)], SHIPPED, path, 12, sha=None)
+    assert json.loads(path.read_text())["question_set"] == "heldout.yaml"
+
+
 def test_report_leads_with_the_matrix_and_details_three_runs(tmp_path: Path) -> None:
     miss = result(question("obligation", "ob-09", ("X:5",)), [("Z:1",), ("Z:2",)])
     partial = result(question("cross_document", "cd-01", ("X:5", "Y:10")), [("X:5",)])

@@ -518,6 +518,8 @@ def record_runs(conn: Connection, runs: Sequence[RunResult], git_sha: str | None
                         {
                             **asdict(run_result.metrics),
                             "params": asdict(run_result.params),
+                            # main set or held-out: eval_runs has no column for it
+                            "question_set": settings.eval_questions_path.name,
                             "corpus_hash": run_result.corpus_hash,
                             "chunk_count": run_result.chunk_count,
                         }
@@ -654,6 +656,7 @@ def write_metrics_json(
         "separation_auc": m.separation_auc,
         "n_questions": m.n_questions,
         "expected_questions": expected_questions,
+        "question_set": settings.eval_questions_path.name,
         "config": shipped.label,
         "config_hash": gated.config_hash,
         "git_sha": sha,
@@ -674,7 +677,8 @@ def write_metrics_json(
 
 SELECTION_CAVEAT = (
     "The best combination is chosen on the same questions it is scored on, so "
-    "its number is optimistic; the set is too small for a held-out split. "
+    "its number is optimistic. data/eval/heldout.yaml estimates by how much: "
+    "run it once (make eval-heldout) with the configuration frozen. "
     "One question moves hit@5 by 1/n_answerable: trust differences that hold "
     "across combinations over the best single number."
 )
@@ -700,7 +704,8 @@ def write_report(
         "# Retrieval eval",
         "",
         f"{datetime.now(UTC):%Y-%m-%d %H:%M} UTC · git {sha or 'unknown'} · "
-        f"{n} questions ({gated.metrics.n_answerable} answerable) · "
+        f"{n} questions ({gated.metrics.n_answerable} answerable, "
+        f"{settings.eval_questions_path.name}) · "
         f"model {settings.embedding_model}",
         "",
     ]

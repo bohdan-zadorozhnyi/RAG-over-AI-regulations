@@ -9,6 +9,9 @@ data/processed/*
 !data/raw/.gitkeep
 eval-report.md
 eval-metrics.json
+eval-heldout-report.md
+eval-heldout-metrics.json
+.DS_Store
 .env
 infra/.terraform/
 infra/*.tfstate*

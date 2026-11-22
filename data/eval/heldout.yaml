@@ -1,0 +1,194 @@
+# HELD-OUT EVAL SET — 12 questions, 3 per category.
+#
+# PURPOSE: this set exists so you can report a number you did not tune against.
+# The 40-question set in questions.yaml is used to choose a configuration
+# (chunking strategy, recital filter, rank normalisation). Choosing the best of
+# 12 combinations on 40 questions means the winning score is optimistic. This
+# set estimates how much.
+#
+# RULES OF USE — the value is entirely in following them:
+#   1. Freeze the configuration on questions.yaml first.
+#   2. Run this set ONCE.
+#   3. Do not tune anything in response to the result.
+#   4. Report it beside the main number, not instead of it.
+#   If you look at this result and then change a setting, it has become a
+#   second training set and you no longer have a held-out estimate.
+#
+# Difficulty mirrors questions.yaml rather than maximising it — one collision
+# in three direct lookups, same proportion as the main set — so the two
+# numbers are comparable.
+#
+# CONVENTIONS as in questions.yaml. Annex citations use the parser's
+# article_no value: "32024R1689:Annex IV".
+# expected_behaviour: answer | scoped | refuse  (read by step 7)
+#
+# All references verified against the EUR-Lex XHTML, 2026-11-22, by reading
+# the cited article text and checking for other articles imposing the same
+# duty — the two failure modes that produced four defects in the main set.
+
+# ================= DIRECT LOOKUP =================
+
+- id: ho-dl-01
+  category: direct_lookup
+  question: What does Article 32 of the GDPR require?
+  expected_articles: ["32016R0679:32"]
+  expected_behaviour: answer
+  collision: true
+  notes: |
+    The set's one collision, at main-set proportion. Article 32 is substantive
+    in all three: GDPR security of processing, AI Act presumption of conformity
+    for notified bodies, DORA structure of the Oversight Framework. Milder than
+    dl-07/dl-08 because no instrument's Article 32 is famous.
+
+- id: ho-dl-02
+  category: direct_lookup
+  question: AI Act Article 15 — what does it cover?
+  expected_articles: ["32024R1689:15"]
+  expected_behaviour: answer
+  notes: Accuracy, robustness and cybersecurity. Dash-phrasing, no collision.
+
+- id: ho-dl-03
+  category: direct_lookup
+  question: What does Annex IV of the AI Act specify?
+  expected_articles: ["32024R1689:Annex IV"]
+  expected_behaviour: answer
+  notes: |
+    Second annex probe, different annex from dl-06. Annex IV is the contents of
+    the technical documentation referred to in Article 11(1). Retrieving
+    Article 11 instead is a near-miss, not a hit.
+
+# ================= OBLIGATION =================
+
+- id: ho-ob-01
+  category: obligation
+  question: >-
+    A company discovers that a system it already sells does not meet the rules.
+    What is it required to do?
+  expected_articles: ["32024R1689:20"]
+  expected_behaviour: answer
+  notes: |
+    Article 20, corrective actions and duty of information. Avoids "corrective
+    action", "withdraw" and "recall" — all the article's own words. Checked
+    that Articles 16 and 21 do not independently impose this duty.
+
+- id: ho-ob-02
+  category: obligation
+  question: >-
+    When does an organisation have to put someone in post specifically to
+    oversee how it handles personal data?
+  expected_articles: ["32016R0679:37"]
+  expected_behaviour: answer
+  notes: |
+    Article 37, designation of the DPO. Avoids "data protection officer" and
+    "designate". Articles 38 and 39 cover position and tasks once appointed,
+    not when appointment is required — so 37 alone is minimal sufficient.
+
+- id: ho-ob-03
+  category: obligation
+  question: >-
+    What programme must a financial entity run to find weaknesses in its
+    operational resilience before something goes wrong?
+  expected_articles: ["32022R2554:24"]
+  expected_behaviour: answer
+  notes: |
+    Article 24 establishes the digital operational resilience testing
+    programme. Articles 25 and 26 specify kinds of testing within it, so
+    retrieving those is partial. Deliberately avoids the word "testing" in the
+    question to stop it matching three article titles at once.
+
+# ================= CROSS-DOCUMENT =================
+
+- id: ho-cd-01
+  category: cross_document
+  question: >-
+    Can sensitive personal data be used to check whether an AI model is biased?
+  expected_articles: ["32024R1689:10", "32016R0679:9"]
+  expected_behaviour: answer
+  notes: |
+    The strongest cross-document question in either set, because the texts
+    themselves connect. AI Act 10(5) permits providers to "exceptionally
+    process special categories of personal data" for bias detection, expressly
+    "in addition to the provisions set out in Regulation (EU) 2016/679".
+    GDPR 9 is the prohibition that creates the need for the derogation.
+    Neither instrument answers it alone and the correct answer is conditional.
+
+- id: ho-cd-02
+  category: cross_document
+  question: >-
+    A bank rolls out an AI tool to its staff. What training or skills must the
+    staff be given, for the AI itself and for ICT security generally?
+  expected_articles: ["32024R1689:4", "32022R2554:13"]
+  expected_behaviour: answer
+  notes: |
+    AI Act 4 (AI literacy: providers and deployers ensure staff dealing with AI
+    systems have sufficient AI literacy) + DORA 13(6) (ICT security awareness
+    programmes and resilience training, compulsory for all employees). Both
+    unused by the main set. DORA 5(4) covers only the management body; AI Act
+    26(2) only the persons assigned human oversight — partial, not required.
+    Replaced the original ho-cd-02 (AI harm: AI Act 73 + GDPR 34) before the
+    first run: it repeated main-set cd-02's scenario and target, and GDPR 34
+    needs a personal data breach the question never mentions.
+
+- id: ho-cd-03
+  category: cross_document
+  question: >-
+    Customer data is used to train a model. What must the customers have been
+    told, and what has to be documented about the data itself?
+  expected_articles: ["32016R0679:13", "32024R1689:10"]
+  expected_behaviour: answer
+  notes: |
+    Two distinct duties that are easy to conflate: transparency to the data
+    subject at collection (GDPR 13) and data governance documentation for the
+    training set (AI Act 10). Tests whether the two senses of "what must be
+    documented" stay separate.
+
+# ================= OUT OF SCOPE =================
+# All three are Tier B — the instrument is named in the corpus but its
+# substantive requirements are not. Presence verified by searching for the
+# spelled-out title as well as the celex number, which is the check that
+# failed on oos-01.
+
+- id: ho-oos-01
+  category: out_of_scope
+  question: >-
+    What risk assessment obligations does the Digital Services Act place on
+    very large online platforms?
+  expected_articles: []
+  expected_behaviour: refuse
+  tier: B
+  notes: |
+    Tier B, strong. Regulation (EU) 2022/2065 is referenced on seven lines of
+    the AI Act, and "risk assessment" language is everywhere in the corpus, so
+    retrieval will return confident matches. The DSA's own VLOP duties are not
+    there.
+
+- id: ho-oos-02
+  category: out_of_scope
+  question: >-
+    What clinical evaluation is required before a medical device can be CE
+    marked?
+  expected_articles: []
+  expected_behaviour: refuse
+  tier: B
+  notes: |
+    Tier B, strong and subtle. Regulation (EU) 2017/745 appears in AI Act
+    Annex I, Article 6(1) ties high-risk classification to it, and the corpus
+    is full of CE marking and conformity assessment text (AI Act 43, 47, 48).
+    Everything about the question looks answerable; the clinical evaluation
+    requirements are in the MDR, which is not indexed.
+
+- id: ho-oos-03
+  category: out_of_scope
+  question: >-
+    Who is liable for damage caused by an AI system, and what must a claimant
+    prove?
+  expected_articles: []
+  expected_behaviour: refuse
+  tier: B
+  notes: |
+    Tier B by effect rather than by citation: no liability instrument appears
+    in the corpus, but GDPR 82 is titled "Right to compensation and liability"
+    and will retrieve strongly. The trap is answering a general AI liability
+    question with the GDPR's compensation regime, which covers only unlawful
+    processing. A scoped answer naming that limit is arguably better than a
+    bare refusal — decide which you credit before step 7 and record it here.
