@@ -20,6 +20,8 @@ def hit(**overrides: object) -> Retrieved:
         "text": "2. The system shall comprise:\n(a) identification;\n(b) estimation.",
         "vector_rank": 2,
         "fts_rank": None,
+        "reference_rank": None,
+        "pinned": False,
         "fused_score": 0.0161,
         "similarity": 0.7123,
         "strategy": "section_aware",
@@ -40,6 +42,8 @@ def test_ask_prints_ranked_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
             chunk_id=2,
             header="",
             similarity=None,
+            reference_rank=1,
+            pinned=True,
             citations=("32024R1689:7", "32024R1689:8"),
         )
         return SearchResult([hit(), second], nearest_similarity=0.7512)
@@ -55,7 +59,7 @@ def test_ask_prints_ranked_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "Article 9: Risk management system, paragraph 2" in result.output
     assert "2. The system shall comprise: / (a) identification; / (b) estimation." in result.output
     assert "2. 32024R1689:7, 32024R1689:8" in result.output  # baseline: several provisions
-    assert "sim -" in result.output  # full-text-only hit
+    assert "sim -   ref #1  pinned" in result.output  # a pinned reference hit
 
 
 def test_ask_include_recitals_overrides_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:

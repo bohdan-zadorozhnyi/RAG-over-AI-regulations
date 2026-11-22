@@ -157,6 +157,8 @@ def ask(
             f"{rank}. {', '.join(hit.citations)}   score {hit.fused_score:.4f}   "
             f"vector #{_rank(hit.vector_rank)}  text #{_rank(hit.fts_rank)}   "
             f"sim {_similarity(hit.similarity)}"
+            + (f"   ref #{hit.reference_rank}" if hit.reference_rank else "")
+            + ("  pinned" if hit.pinned else "")
         )
         if hit.header:
             typer.echo(f"   {hit.header}")

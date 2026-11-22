@@ -66,6 +66,8 @@ class Retrieved:
     text: str
     vector_rank: int | None  # None: not in the vector top-k
     fts_rank: int | None  # None: not in the full-text top-k
+    reference_rank: int | None  # None: no provision it covers is named in the question
+    pinned: bool  # the best chunk of a provision the question names; ranked first
     fused_score: float
     similarity: float | None  # cosine similarity to the question; None: full-text only
     strategy: str

@@ -229,3 +229,20 @@ def test_real_baseline_search_fills_vector_top_k(
     ).hits
 
     assert sum(h.vector_rank is not None for h in found) == settings.vector_top_k
+
+
+# --- explicit references ---------------------------------------------------
+
+
+def test_reference_pins_the_named_provision(indexed: Connection) -> None:
+    # "alpha" pulls articles 1 and 6 to the top; the question also names
+    # Article 4 (delta), which neither path ranks first.
+    found = hits(indexed, "What does Article 4 of the Test Act say about alpha?")
+    top = found[0]
+    assert top.pinned and top.citations == (f"{TEST_CELEX}:4",) and top.reference_rank == 1
+    assert sum(h.pinned for h in found) == 1  # one pinned chunk per named provision
+
+
+def test_no_reference_changes_nothing(indexed: Connection) -> None:
+    found = hits(indexed, "alpha gamma obligations")
+    assert all(h.reference_rank is None and not h.pinned for h in found)

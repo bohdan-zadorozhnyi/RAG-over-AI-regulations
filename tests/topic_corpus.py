@@ -64,6 +64,7 @@ def use_test_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     for name, value in {
         "celex_ids": [TEST_CELEX],
         "document_titles": {TEST_CELEX: "Test Act"},
+        "document_aliases": {TEST_CELEX: ["Test Act"]},
         "embedding_model": MODEL,
         "chunk_target_tokens": 12,
         "chunk_overlap_tokens": 2,

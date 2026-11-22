@@ -24,6 +24,13 @@ class Settings(BaseSettings):
         "32016R0679": "GDPR",
         "32022R2554": "DORA",
     }
+    # Names a question may use for a regulation, matched case-insensitively
+    # on word boundaries to resolve "Article 12 of DORA" to a provision.
+    document_aliases: dict[str, list[str]] = {
+        "32024R1689": ["AI Act", "Artificial Intelligence Act", "Regulation (EU) 2024/1689"],
+        "32016R0679": ["GDPR", "General Data Protection Regulation", "Regulation (EU) 2016/679"],
+        "32022R2554": ["DORA", "Digital Operational Resilience Act", "Regulation (EU) 2022/2554"],
+    }
     eurlex_html_url: str = "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:{celex}"
 
     # Acquisition (not retrieval-affecting: keep out of config_hash)
@@ -58,6 +65,8 @@ class Settings(BaseSettings):
     vector_top_k: int = 20
     fts_top_k: int = 20
     fusion_top_k: int = 8
+    # Chunks of explicitly referenced provisions considered (the third ranking).
+    reference_top_k: int = 20
     rrf_k: int = 60
     # ts_rank normalisation bitmask (Postgres docs): 0 none, 1 divide by
     # 1 + log(length), 2 divide by length. Long recitals win under 0; an eval

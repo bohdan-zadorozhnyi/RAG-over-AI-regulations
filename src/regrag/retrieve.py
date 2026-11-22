@@ -17,8 +17,18 @@ question to appear in one chunk matched nothing for 4 of 5 eval questions.
 The OR query is built from Postgres's own lexemes (same stemmer and stopwords
 as chunks.tsv), so the FTS path ranks chunks by query-term overlap. RRF only
 consumes ranks, so it tolerates that noisier ranking.
+
+A third ranking handles explicit references. Neither path above can resolve
+"Article 12 of DORA": the number matches every chunk containing a 12, and
+the embedding barely registers it. parse_references() finds "Article N",
+"Art. N" and "Annex <roman>", each paired with the nearest regulation named
+(configured aliases); unpaired references apply to every regulation in
+scope. Chunks of the referenced provisions are ranked by vector distance and
+fused like the other two lists, and the best chunk of each referenced
+provision is pinned to the top: naming a provision is explicit intent.
 """
 
+import re
 from dataclasses import dataclass
 
 from pgvector.psycopg import register_vector
@@ -78,6 +88,56 @@ class SearchParams:
         return f"{self.strategy}, {recitals}, norm {self.fts_rank_normalization}"
 
 
+_REFERENCE = re.compile(
+    r"\b(?:articles?|art\.?)\s*(?P<article>\d+[a-z]?)\b"
+    r"|\bannex\s+(?P<annex>[ivxlc]+)\b",
+    re.IGNORECASE,
+)
+
+
+def parse_references(question: str) -> list[str]:
+    """Provisions the question names, as "<celex>:<article_no>" citations.
+
+    'What does Article 12 of DORA require?' -> ['32022R2554:12']
+    'GDPR Art. 35 ...' -> ['32016R0679:35']
+    'What does Annex III of the AI Act list?' -> ['32024R1689:Annex III']
+    'What does Article 9 say?' -> Article 9 of every regulation in scope
+
+    Each reference takes the regulation written next to it ("Article 12 of
+    DORA", "DORA's Article 30", "GDPR Art. 35"), else the nearest one
+    mentioned, else every regulation in scope.
+    """
+    aliases = [
+        (celex, re.escape(alias))
+        for celex in settings.celex_ids
+        for alias in settings.document_aliases.get(celex, [])
+    ]
+    mentions = [
+        (match.start(), celex)
+        for celex, alias in aliases
+        for match in re.finditer(rf"\b{alias}\b", question, re.IGNORECASE)
+    ]
+    found: list[str] = []
+    for ref in _REFERENCE.finditer(question):
+        article = ref["article"]
+        number = article.lower() if article else f"Annex {ref['annex'].upper()}"
+        after, before = question[ref.end() :], question[: ref.start()]
+        adjacent = [
+            celex
+            for celex, alias in aliases
+            if re.match(rf"(?:\(\w+\))*\s*(?:of\s+(?:the\s+)?)?{alias}\b", after, re.I)
+            or re.search(rf"\b{alias}(?:'s)?\s*$", before, re.I)
+        ]
+        if adjacent:
+            targets = adjacent[:1]
+        elif mentions:
+            targets = [min(mentions, key=lambda m: abs(m[0] - ref.start()))[1]]
+        else:
+            targets = list(settings.celex_ids)
+        found.extend(f"{celex}:{number}" for celex in targets)
+    return list(dict.fromkeys(found))  # unique, in order
+
+
 # Session-local pgvector settings, applied inside the search transaction.
 # iterative_scan keeps the HNSW scan going when WHERE filters (model,
 # strategy, kind, documents) discard candidates, so a filtered search still
@@ -128,19 +188,56 @@ fts AS (
         LIMIT %(fts_k)s
     ) matched
 ),
+-- Chunks of the provisions the question names. A chunk counts for every
+-- provision it overlaps (chunk_sections), so baseline chunks qualify too.
+ref AS (
+    SELECT chunk_id, distance, rank, provision_rank = 1 AS pinned
+    FROM (
+        SELECT chunk_id, distance,
+               row_number() OVER (ORDER BY distance, chunk_id) AS rank,
+               row_number() OVER (PARTITION BY provision ORDER BY distance, chunk_id)
+                   AS provision_rank
+        FROM (
+            SELECT c.id AS chunk_id, min(d.celex || ':' || s2.article_no) AS provision,
+                   min(e.vector <=> %(qvec)s) AS distance
+            FROM chunks c
+            JOIN embeddings e ON e.chunk_id = c.id AND e.model = %(model)s
+            JOIN sections s ON s.id = c.section_id
+            JOIN documents d ON d.id = c.document_id
+            JOIN chunk_sections cs ON cs.chunk_id = c.id
+            JOIN sections s2 ON s2.id = cs.section_id
+            WHERE c.strategy = %(strategy)s
+              AND s.kind = ANY(%(kinds)s)
+              AND d.celex = ANY(%(celex_ids)s)
+              AND d.celex || ':' || s2.article_no = ANY(%(references)s)
+            GROUP BY c.id
+        ) referenced
+    ) ranked
+    WHERE rank <= %(ref_k)s
+),
 fused AS (
-    SELECT coalesce(vec.chunk_id, fts.chunk_id) AS chunk_id,
-           vec.rank AS vector_rank,
-           vec.distance,
-           fts.rank AS fts_rank,
-           coalesce(1.0::float8 / (%(rrf_k)s + vec.rank), 0)
-         + coalesce(1.0::float8 / (%(rrf_k)s + fts.rank), 0) AS score
-    FROM vec FULL OUTER JOIN fts ON fts.chunk_id = vec.chunk_id
-    ORDER BY score DESC, chunk_id
+    SELECT chunk_id,
+           min(vector_rank) AS vector_rank,
+           min(fts_rank) AS fts_rank,
+           min(ref_rank) AS ref_rank,
+           min(distance) AS distance,
+           bool_or(pinned) AS pinned,
+           sum(1.0::float8 / (%(rrf_k)s + rank)) AS score
+    FROM (
+        SELECT chunk_id, rank, rank AS vector_rank, NULL::bigint AS fts_rank,
+               NULL::bigint AS ref_rank, distance, false AS pinned FROM vec
+        UNION ALL
+        SELECT chunk_id, rank, NULL, rank, NULL, NULL, false FROM fts
+        UNION ALL
+        SELECT chunk_id, rank, NULL, NULL, rank, distance, pinned FROM ref
+    ) ranked
+    GROUP BY chunk_id
+    ORDER BY pinned DESC, score DESC, chunk_id
     LIMIT %(top_n)s
 )
 SELECT f.chunk_id, d.celex, s.article_no, c.header, c.text,
-       f.vector_rank, f.fts_rank, f.score, 1 - f.distance AS similarity,
+       f.vector_rank, f.fts_rank, f.ref_rank, f.pinned, f.score,
+       1 - f.distance AS similarity,
        c.strategy, s.kind, s.path, cited.citations,
        1 - (SELECT min(distance) FROM vec) AS nearest_similarity
 FROM fused f
@@ -161,7 +258,9 @@ CROSS JOIN LATERAL (
         GROUP BY 1
     ) provisions
 ) cited
-ORDER BY f.score DESC, f.chunk_id
+-- Pinned first (the best chunk of each referenced provision, nearest first),
+-- then by fused score.
+ORDER BY f.pinned DESC, CASE WHEN f.pinned THEN f.ref_rank END, f.score DESC, f.chunk_id
 """
 
 
@@ -199,6 +298,8 @@ def search(
             "vector_k": settings.vector_top_k,
             "fts_k": settings.fts_top_k,
             "norm": chosen.fts_rank_normalization,
+            "references": parse_references(question),
+            "ref_k": settings.reference_top_k,
             "rrf_k": settings.rrf_k,
             "top_n": settings.fusion_top_k,
         }
@@ -218,6 +319,8 @@ def search(
             text=text,
             vector_rank=vector_rank,
             fts_rank=fts_rank,
+            reference_rank=ref_rank,
+            pinned=bool(pinned),
             fused_score=float(score),
             similarity=None if similarity is None else float(similarity),
             strategy=row_strategy,
@@ -233,6 +336,8 @@ def search(
             text,
             vector_rank,
             fts_rank,
+            ref_rank,
+            pinned,
             score,
             similarity,
             row_strategy,
