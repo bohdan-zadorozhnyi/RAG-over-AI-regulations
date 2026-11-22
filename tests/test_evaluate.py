@@ -124,6 +124,13 @@ def test_load_questions_lists_every_problem(tmp_path: Path) -> None:
   expected_articles: ["32024R1689:9"]
   expected_behaviour: answer
   collision: "yes"
+- id: i
+  category: out_of_scope
+  question: Q?
+  expected_articles: []
+  expected_behaviour: refuse
+  tier: B
+  also_accept: [refuse, maybe]
 """,
     )
     with pytest.raises(ValueError) as error:
@@ -133,6 +140,8 @@ def test_load_questions_lists_every_problem(tmp_path: Path) -> None:
         "a: unknown category 'lookup'",
         "b: expected_articles is empty",
         "c: out_of_scope questions expect no articles",
+        "i: also_accept 'refuse': another of",
+        "i: also_accept 'maybe': another of",
         "d: '32024R1689:Recital 12': recitals are not binding",
         "d: '9' is not <celex>:<article_no>",
         "d: empty question",

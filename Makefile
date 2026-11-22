@@ -1,4 +1,4 @@
-.PHONY: db migrate ingest parse chunk embed index ask eval eval-heldout check fmt clean
+.PHONY: db migrate ingest parse chunk embed index ask eval eval-answers eval-heldout check fmt clean
 
 DB ?= postgresql://regrag:regrag@localhost:5432/regrag
 
@@ -34,6 +34,9 @@ ask:
 	uv run regrag ask "$(Q)"
 
 eval:   ; uv run regrag eval --report eval-report.md --metrics eval-metrics.json
+
+# Answers (step 7): calls the model; replies are cached, so reruns are free.
+eval-answers: ; uv run regrag eval-answers
 
 # Held-out set: run ONCE, on the frozen shipped configuration only (no matrix,
 # so there is nothing to pick a winner from). See data/eval/heldout.yaml.

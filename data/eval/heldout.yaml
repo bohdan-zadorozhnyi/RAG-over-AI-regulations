@@ -185,10 +185,12 @@
   expected_articles: []
   expected_behaviour: refuse
   tier: B
+  also_accept: [scoped]
   notes: |
     Tier B by effect rather than by citation: no liability instrument appears
     in the corpus, but GDPR 82 is titled "Right to compensation and liability"
     and will retrieve strongly. The trap is answering a general AI liability
     question with the GDPR's compensation regime, which covers only unlawful
     processing. A scoped answer naming that limit is arguably better than a
-    bare refusal — decide which you credit before step 7 and record it here.
+    bare refusal. Decided before step 7: both are credited (also_accept). An
+    answer that presents GDPR 82 as the AI liability regime is not.

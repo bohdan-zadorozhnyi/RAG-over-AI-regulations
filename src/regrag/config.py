@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -99,9 +99,36 @@ class Settings(BaseSettings):
     # at least vector_top_k; iterative scans extend it when filters drop rows.
     hnsw_ef_search: int = 100
 
-    # Generation
-    answer_provider: str = "bedrock"  # or "gemini", or "none"
-    answer_model: str = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    # Generation. Provider "anthropic" is the Claude API; Bedrock is the
+    # intended production path once the AWS account has model quota (step 8).
+    answer_provider: Literal["anthropic", "none"] = "anthropic"
+    # Cheapest current model while the prompt is iterated; the answer eval
+    # decides the shipped one.
+    answer_model: str = "claude-haiku-5-5"
+    # From .env (REGRAG_ANTHROPIC_API_KEY), never from the shell: Claude Code
+    # would pick up a plain ANTHROPIC_API_KEY and bill its own usage to it.
+    anthropic_api_key: SecretStr | None = None
+    # Thinking depth (adaptive thinking is always on for current models).
+    answer_effort: Literal["low", "medium", "high"] = "medium"
+    # Room for thinking plus the reply; a reply cut off here is an error.
+    answer_max_tokens: int = 8000
+    # USD per million tokens (input, output), Claude API list prices, for
+    # cost_usd. A model not listed is logged with no cost.
+    answer_prices: dict[str, tuple[float, float]] = {
+        "claude-haiku-5-5": (0.10, 0.50),
+        "claude-sonnet-5-5": (2.00, 10.00),
+        "claude-opus-5-5": (4.00, 20.00),
+    }
+    # What the model reads: each retrieved provision expanded to its whole
+    # article or annex (chars, about 4 per token). A longer one is cut to the
+    # retrieved paragraphs and their neighbours; so is any provision once the
+    # whole context would pass answer_context_max_chars.
+    answer_article_max_chars: int = 8000
+    answer_context_max_chars: int = 48000
+    # Replies cached by everything that shapes them (model, effort, prompts),
+    # so re-scoring an answer eval costs nothing. Under data/processed: not
+    # committed.
+    answer_cache_dir: Path = Path("data/processed/answer_cache")
 
     langfuse_enabled: bool = False
 
@@ -139,6 +166,13 @@ _NOT_HASHED = frozenset(
         "embedding_device",
         "answer_provider",
         "answer_model",
+        "anthropic_api_key",
+        "answer_effort",
+        "answer_max_tokens",
+        "answer_prices",
+        "answer_cache_dir",
+        "answer_article_max_chars",
+        "answer_context_max_chars",
         "langfuse_enabled",
         "eval_questions_path",
         "eval_questions_per_category",

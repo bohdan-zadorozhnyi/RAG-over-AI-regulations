@@ -1,8 +1,13 @@
 """One subcommand per stage. Stages never call each other."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
+
+if TYPE_CHECKING:
+    from regrag.models import SearchResult
+    from regrag.retrieve import SearchParams
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
@@ -126,24 +131,52 @@ def ask(
         "Defaults to the exclude_recitals setting.",
         show_default=False,
     ),
+    retrieve_only: bool = typer.Option(
+        False, "--retrieve-only", help="Print the retrieved chunks; no model call."
+    ),
 ) -> None:
-    """Retrieve and answer with citations.
-
-    Until step 7 adds answer generation, prints the retrieved chunks.
-    """
+    """Retrieve and answer with citations, or refuse."""
     import psycopg
 
     from regrag import retrieve
+    from regrag.answer import AnswerError, answer, provision_label
 
     try:
         params = retrieve.SearchParams.from_settings(
             strategy=strategy, exclude_recitals=exclude_recitals
         )
-        result = retrieve.search(question, params)
-    except (ValueError, psycopg.OperationalError) as exc:
+        if retrieve_only:
+            _print_retrieved(retrieve.search(question, params), params)
+            return
+        reply = answer(question, params)
+    except (ValueError, AnswerError, psycopg.OperationalError) as exc:
         typer.echo(f"ask failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
+    cost = "" if reply.cost_usd is None else f", ${reply.cost_usd:.4f}"
+    model = reply.model or "no model call"
+    typer.echo(f"[{reply.status}] {model}, {reply.latency_ms / 1000:.1f} s{cost}")
+    typer.echo("")
+    if reply.text:
+        typer.echo(reply.text)
+        typer.echo("")
+    if reply.missing:
+        typer.echo(f"Not covered: {reply.missing}")
+        typer.echo("")
+    if reply.cited_sources:
+        typer.echo("Sources:")
+        for n in reply.cited_sources:
+            source = reply.sources[n - 1]
+            label = provision_label(source.provision)
+            title = f"{label}: {source.heading}" if source.heading else label
+            typer.echo(f"  [{n}] {title}" + (" (excerpt)" if source.excerpt else ""))
+    if reply.downgraded:
+        typer.echo("(the model answered without a valid citation; withheld)")
+    if reply.invalid_sources:
+        typer.echo(f"(dropped markers naming no retrieved source: {reply.invalid_sources})")
+
+
+def _print_retrieved(result: "SearchResult", params: "SearchParams") -> None:
     if not result.hits:
         typer.echo("no chunks retrieved")
         return
@@ -226,6 +259,52 @@ def eval(
         )
     written = [p for p in (report, metrics) if p]
     typer.echo(f"wrote {', '.join(written)}")
+
+
+@app.command("eval-answers")
+def eval_answers(
+    report: str | None = typer.Option("eval-answers-report.md", help="Markdown report path."),
+    metrics: str = typer.Option("eval-answers-metrics.json", help="Flat metrics JSON path."),
+    allow_incomplete: bool = typer.Option(
+        False, "--allow-incomplete", help="Run with fewer questions than the full set."
+    ),
+) -> None:
+    """Answer the eval questions with the configured model and score the replies.
+
+    Costs money on the first run of a prompt or model; cached replies are free.
+    """
+    import psycopg
+
+    from regrag.answer import AnswerError
+    from regrag.answer_eval import run
+
+    try:
+        _, m = run(
+            report_path=Path(report) if report else None,
+            metrics_path=Path(metrics),
+            allow_incomplete=allow_incomplete,
+        )
+    except (ValueError, FileNotFoundError, AnswerError, psycopg.OperationalError) as exc:
+        typer.echo(f"eval-answers failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    def f(v: float | None) -> str:
+        return "-" if v is None else f"{v:.3f}"
+
+    typer.echo(
+        f"{m.n_questions} questions · behaviour {f(m.behaviour_accuracy)} · "
+        f"refusal {f(m.refusal_accuracy)} (false {m.false_refusals}, missed {m.missed_refusals}) · "
+        f"retrieval-limited {m.retrieval_limited}"
+    )
+    typer.echo(
+        f"citation recall {f(m.citation_recall)} · precision {f(m.citation_precision)} · "
+        f"withheld {m.downgraded} · invalid markers {m.invalid_markers}"
+    )
+    typer.echo(
+        f"{m.api_calls} API calls, spent ${m.cost_usd:.4f} "
+        f"(uncached run ${m.cost_usd_uncached:.4f})"
+    )
+    typer.echo(f"wrote {', '.join(p for p in (report, metrics) if p)}")
 
 
 if __name__ == "__main__":

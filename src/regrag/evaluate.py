@@ -114,10 +114,17 @@ class Question:
     # direct_lookup questions written to fail until a structural article
     # lookup exists; direct_lookup is also reported without them
     collision: bool = False
+    # Other behaviours the answer eval credits, where a reasonable reader would
+    # accept either (a refusal, or a scoped answer naming the corpus's limit).
+    also_accept: tuple[str, ...] = ()
 
     @property
     def answerable(self) -> bool:
         return self.category != OUT_OF_SCOPE
+
+    @property
+    def accepted_behaviours(self) -> tuple[str, ...]:
+        return (self.expected_behaviour, *self.also_accept)
 
 
 def load_questions(path: Path) -> list[Question]:
@@ -142,6 +149,10 @@ def load_questions(path: Path) -> list[Question]:
         if not isinstance(collision, bool):
             problems.append(f"{where}: collision must be true or false")
             continue
+        also_accept = item.get("also_accept") or []
+        if not isinstance(also_accept, list):
+            problems.append(f"{where}: also_accept must be a list")
+            continue
         tier = item.get("tier")
         question = Question(
             id=where,
@@ -151,6 +162,7 @@ def load_questions(path: Path) -> list[Question]:
             expected_behaviour=str(item.get("expected_behaviour", "")),
             tier=None if tier is None else str(tier),
             collision=collision,
+            also_accept=tuple(str(b) for b in also_accept),
         )
         problems.extend(f"{where}: {p}" for p in _question_problems(question))
         questions.append(question)
@@ -182,6 +194,9 @@ def _question_problems(q: Question) -> list[str]:
         problems.append(f"out_of_scope questions need a tier, one of {TIERS}")
     if q.answerable and q.tier is not None:
         problems.append("tier applies to out_of_scope questions only")
+    for behaviour in q.also_accept:
+        if behaviour not in BEHAVIOURS or behaviour == q.expected_behaviour:
+            problems.append(f"also_accept {behaviour!r}: another of {BEHAVIOURS}")
     if q.collision and q.category != DIRECT_LOOKUP:
         problems.append("collision applies to direct_lookup questions only")
     if len(set(q.expected_articles)) != len(q.expected_articles):

@@ -17,6 +17,7 @@ dependencies = [
     "langfuse>=2.50",
     "boto3>=1.35",
     "transformers>=5.0",
+    "anthropic>=2.12",
 ]
 
 [project.optional-dependencies]

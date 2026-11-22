@@ -150,10 +150,15 @@
   question: How quickly must a financial entity report a major ICT-related incident?
   expected_articles: ["32022R2554:19"]
   expected_behaviour: answer
+  also_accept: [scoped]
   notes: |
     The category's easy anchor: uses the article's own phrase ("major
     ICT-related incident") on purpose, unlike the rest of the category.
-    Article 19 is the reporting obligation.
+    Article 19 is the reporting obligation. It sets no deadline itself:
+    19(4) defers the time limits to technical standards under Article 20,
+    which only mandates them; the hours are in a delegated regulation not in
+    the corpus. So a scoped reply (the reports and their sequence, deadlines
+    not covered) is correct too. Found by the step 7 answer eval.
 
 - id: ob-04
   category: obligation
