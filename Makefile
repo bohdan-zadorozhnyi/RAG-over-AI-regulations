@@ -1,4 +1,4 @@
-.PHONY: db migrate ingest parse chunk embed index ask eval eval-answers eval-heldout check fmt clean
+.PHONY: db migrate ingest parse chunk embed index ask eval eval-answers eval-heldout eval-fixture check fmt clean
 
 DB ?= postgresql://regrag:regrag@localhost:5432/regrag
 
@@ -43,6 +43,17 @@ eval-answers: ; uv run regrag eval-answers
 eval-heldout:
 	REGRAG_EVAL_QUESTIONS_PATH=data/eval/heldout.yaml REGRAG_EVAL_QUESTIONS_PER_CATEGORY=3 \
 	uv run regrag eval --no-matrix --report eval-heldout-report.md --metrics eval-heldout-metrics.json
+
+# CI's eval job, locally: the checked-in fixture corpus, the hashing encoder,
+# no downloads, in a database of its own (the real one is never touched).
+FIXTURE_DB ?= regrag_fixture
+FIXTURE_ENV = REGRAG_DATABASE_URL=postgresql://regrag:regrag@localhost:5432/$(FIXTURE_DB) \
+	REGRAG_EMBEDDING_MODEL=regrag/hashing-bow REGRAG_RERANK_MODEL=
+eval-fixture:
+	@docker compose exec -T postgres createdb -U regrag $(FIXTURE_DB) 2>/dev/null || true
+	@$(MAKE) --no-print-directory migrate PSQL="docker compose exec -T postgres psql -U regrag -d $(FIXTURE_DB)"
+	$(FIXTURE_ENV) uv run python -m tests.fixtures.build_index
+	$(FIXTURE_ENV) uv run regrag eval --report eval-fixture-report.md --metrics eval-fixture-metrics.json
 
 all: db ingest parse chunk embed index
 

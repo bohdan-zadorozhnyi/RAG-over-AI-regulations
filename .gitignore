@@ -13,6 +13,8 @@ eval-heldout-report.md
 eval-heldout-metrics.json
 eval-answers-report.md
 eval-answers-metrics.json
+eval-fixture-report.md
+eval-fixture-metrics.json
 .DS_Store
 .env
 infra/.terraform/

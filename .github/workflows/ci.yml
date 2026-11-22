@@ -7,9 +7,16 @@ on:
 
 env:
   REGRAG_DATABASE_URL: postgresql://regrag:regrag@localhost:5432/regrag
-  HIT_AT_5_THRESHOLD: "0.70"
+  # Fixture index: checked-in excerpts (tests/fixtures/corpus.json) embedded
+  # with the offline hashing encoder, so no model download. Deterministic:
+  # the shipped combination measures hit@5 0.767 (23/30); the gate sits just
+  # under it, so losing one question fails. Measures retrieval, fusion and
+  # reference logic, not model quality (make eval does that, locally).
+  # Reproduce with make eval-fixture.
+  REGRAG_EMBEDDING_MODEL: regrag/hashing-bow
+  HIT_AT_5_THRESHOLD: "0.75"
   # Already the default; kept explicit so CI never downloads the 2.2 GB
-  # reranker if the default changes. The fixture eval measures fusion logic.
+  # reranker if the default changes.
   REGRAG_RERANK_MODEL: ""
 
 jobs:

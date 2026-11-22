@@ -10,10 +10,14 @@ just returns plausible-looking wrong results. So this module owns:
   - the checks that the configured model matches what is stored
 
 The encoder is injectable (`Encoder`): tests and CI's offline fixture index
-use a deterministic fake, so neither downloads the 2.2 GB model.
+use a deterministic fake, so neither downloads the 2.2 GB model. CI selects
+it by name (embedding_model = HASHING_MODEL), so the unchanged `regrag eval`
+encodes its questions with it too.
 """
 
+import hashlib
 import os
+import re
 from collections.abc import Callable
 from functools import cache
 from typing import Any
@@ -46,6 +50,45 @@ def query_input(question: str) -> str:
     instruction prefix either, unlike older BGE English models.
     """
     return " ".join(question.split())
+
+
+# --- offline encoder ------------------------------------------------------
+
+# A model name no hub hosts: embeddings stored under it can never be mistaken
+# for bge-m3's, and check_model_indexed keeps the two apart.
+HASHING_MODEL = "regrag/hashing-bow"
+
+_WORD = re.compile(r"[a-z0-9]+")
+# Function words carry no topic; without IDF they would dominate the cosine.
+_STOPWORDS = frozenset(
+    "a an and are as at be by for from has have in is it its may of on or shall "  # noqa: SIM905
+    "that the their this to under what when where which who with does do must "
+    "should can not any such other".split()
+)
+
+
+def hashing_encoder(texts: list[str]) -> Vectors:
+    """Bag of words hashed into embedding_dim buckets, log-scaled, normalised.
+
+    Deterministic across runs and machines (md5, not Python's salted hash),
+    no network, about a millisecond per chunk. Lexical only: in CI the vector
+    side agrees with full-text search instead of adding meaning, so the
+    fixture eval measures fusion, reference lookup and coverage logic, not
+    model quality.
+    """
+    dim = settings.embedding_dim
+    out = np.zeros((len(texts), dim), dtype=np.float32)
+    for row, text in enumerate(texts):
+        counts: dict[int, int] = {}
+        for word in _WORD.findall(text.lower()):
+            if word not in _STOPWORDS:
+                bucket = int.from_bytes(hashlib.md5(word.encode()).digest()[:4], "little") % dim
+                counts[bucket] = counts.get(bucket, 0) + 1
+        for bucket, n in counts.items():
+            out[row, bucket] = 1.0 + np.log(n)
+        out[row, -1] += 1e-3  # never a zero vector
+        out[row] /= np.linalg.norm(out[row])
+    return out
 
 
 # --- model ----------------------------------------------------------------
@@ -93,8 +136,11 @@ def load_encoder() -> Encoder:
     Hugging Face cache, outside the repo. Once cached it loads offline: the
     hub is not contacted for update checks. That is the effect of
     HF_HUB_OFFLINE=1, without the env var's catch that a fresh machine could
-    never make the first download.
+    never make the first download. HASHING_MODEL needs no model at all.
     """
+    if settings.embedding_model == HASHING_MODEL:
+        return hashing_encoder
+
     from sentence_transformers import SentenceTransformer  # slow import
 
     # bge-m3 ships pytorch_model.bin, and transformers then asks the hub for a
