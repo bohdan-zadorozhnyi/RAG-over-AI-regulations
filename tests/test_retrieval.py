@@ -5,10 +5,13 @@ a document ranked first in both rankings must outrank one ranked first in
 only one; absent documents must not contribute.
 """
 
+from collections.abc import Sequence
+from dataclasses import replace
+
 import pytest
 
 from regrag.models import Retrieved, SectionKind
-from regrag.retrieve import reciprocal_rank_fusion, with_coverage
+from regrag.retrieve import reciprocal_rank_fusion, rerank, with_coverage
 
 
 def test_rrf_prefers_documents_ranked_well_in_both() -> None:
@@ -66,6 +69,7 @@ def test_rrf_rejects_invalid_k_or_rank(k: int, rank: int) -> None:
 
 # --- regulation coverage (pure) ---------------------------------------------
 
+
 def chunk(chunk_id: int, celex: str) -> Retrieved:
     return Retrieved(
         chunk_id=chunk_id,
@@ -78,6 +82,7 @@ def chunk(chunk_id: int, celex: str) -> Retrieved:
         reference_rank=None,
         pinned=False,
         coverage=False,
+        rerank_score=None,
         fused_score=1.0 / chunk_id,
         similarity=0.5,
         strategy="section_aware",
@@ -113,3 +118,36 @@ def test_coverage_reuses_the_fused_hit_when_the_chunk_was_already_ranked() -> No
 def test_coverage_with_a_short_fused_list() -> None:
     out = with_coverage([chunk(1, "A")], [chunk(9, "B")], top_n=8, regulations=2)
     assert [h.chunk_id for h in out] == [1, 9]
+
+
+# --- reranking (pure) --------------------------------------------------------
+
+
+def keyword_reranker(question: str, texts: Sequence[str]) -> list[float]:
+    return [float(t.count("good")) for t in texts]
+
+
+def test_rerank_orders_by_score_but_keeps_pins_first() -> None:
+    hits = [
+        replace(chunk(1, "A"), text="bad"),
+        replace(chunk(2, "A"), text="good good"),
+        replace(chunk(3, "A"), text="bad", pinned=True, reference_rank=1),
+        replace(chunk(4, "A"), text="good"),
+    ]
+    ranked, _ = rerank("q", hits, [], keyword_reranker)
+    assert [h.chunk_id for h in ranked] == [3, 2, 4, 1]
+    assert [h.rerank_score for h in ranked] == [0.0, 2.0, 1.0, 0.0]
+
+
+def test_rerank_keeps_the_fused_version_of_a_chunk_found_twice() -> None:
+    fused = replace(chunk(1, "A"), pinned=True, reference_rank=1, vector_rank=4)
+    from_coverage = replace(chunk(1, "A"), vector_rank=None)
+    ranked, _ = rerank("q", [fused], [from_coverage], keyword_reranker)
+    assert ranked[0].pinned and ranked[0].vector_rank == 4
+
+
+def test_rerank_picks_each_regulations_best_from_every_candidate() -> None:
+    hits = [replace(chunk(1, "A"), text="good"), replace(chunk(2, "B"), text="bad")]
+    coverage = [replace(chunk(3, "B"), text="good good good"), replace(chunk(4, "C"), text="bad")]
+    _, best = rerank("q", hits, coverage, keyword_reranker)
+    assert [(h.celex, h.chunk_id) for h in best] == [("B", 3), ("A", 1), ("C", 4)]

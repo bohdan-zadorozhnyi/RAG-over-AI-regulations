@@ -40,8 +40,9 @@ from pgvector.psycopg import register_vector
 
 from regrag.config import settings
 from regrag.db import Connection, connect
-from regrag.encoder import Encoder, check_model_indexed, load_encoder, query_input
+from regrag.encoder import Encoder, check_model_indexed, chunk_input, load_encoder, query_input
 from regrag.models import Retrieved, SearchResult, SectionKind, select_strategies
+from regrag.reranker import Reranker, load_reranker
 
 ALL_KINDS = [k.value for k in SectionKind]
 NON_RECITAL_KINDS = [k.value for k in SectionKind if k is not SectionKind.RECITAL]
@@ -281,8 +282,9 @@ ORDER BY f.pinned DESC, CASE WHEN f.pinned THEN f.ref_rank END, f.score DESC, f.
 """
 )
 
-# The best chunk of each regulation in scope, by the same vector + full-text
-# fusion run within that regulation alone. Supplies regulation coverage.
+# The best chunks of each regulation in scope (per_regulation of them), by the
+# same vector + full-text fusion run within that regulation alone. Supplies
+# regulation coverage.
 COVERAGE_SEARCH = (
     "WITH"
     + _QUERY_CTE
@@ -334,11 +336,14 @@ doc_fused AS (
     GROUP BY celex, chunk_id
 ),
 fused AS (
-    SELECT DISTINCT ON (celex)
-           chunk_id, NULL::bigint AS vector_rank, NULL::bigint AS fts_rank,
+    SELECT chunk_id, NULL::bigint AS vector_rank, NULL::bigint AS fts_rank,
            NULL::bigint AS ref_rank, false AS pinned, score, distance
-    FROM doc_fused
-    ORDER BY celex, score DESC, chunk_id
+    FROM (
+        SELECT chunk_id, score, distance,
+               row_number() OVER (PARTITION BY celex ORDER BY score DESC, chunk_id) AS place
+        FROM doc_fused
+    ) per_regulation
+    WHERE place <= %(per_regulation)s
 )"""
     + _HITS.format(nearest="NULL::float8")
     + """
@@ -352,17 +357,19 @@ def search(
     params: SearchParams | None = None,
     conn: Connection | None = None,
     encoder: Encoder | None = None,
+    reranker: Reranker | None = None,
 ) -> SearchResult:
     """Top `fusion_top_k` chunks for a question, fused from vector and full-text.
 
     `params` defaults to the shipped configuration. Refuses to run if the
     configured model has no embeddings for the strategy: a question vector
     compared against another model's vectors returns confident nonsense with
-    no error. `conn` and `encoder` are injectable.
+    no error. `conn`, `encoder` and `reranker` are injectable.
     """
     if not question.strip():
         raise ValueError("empty question")
     chosen = params or SearchParams.from_settings()
+    reranking = bool(settings.rerank_model)
 
     owns_conn = conn is None
     db = conn or connect()
@@ -384,7 +391,12 @@ def search(
             "references": parse_references(question),
             "ref_k": settings.reference_top_k,
             "rrf_k": settings.rrf_k,
-            "top_n": settings.fusion_top_k,
+            "top_n": (
+                max(settings.fusion_top_k, settings.rerank_candidates)
+                if reranking
+                else settings.fusion_top_k
+            ),
+            "per_regulation": settings.coverage_candidates if reranking else 1,
         }
         covering = settings.regulation_coverage and len(settings.celex_ids) > 1
         with db.transaction():
@@ -396,13 +408,19 @@ def search(
             db.close()
 
     hits = [_hit(row) for row in rows]
+    best_per_regulation = [_hit(row) for row in coverage_rows]
+    if reranking:
+        hits, best_per_regulation = rerank(
+            question, hits, best_per_regulation, reranker or load_reranker()
+        )
     if covering:
         hits = with_coverage(
             hits,
-            [_hit(row) for row in coverage_rows],
+            best_per_regulation,
             top_n=settings.fusion_top_k,
             regulations=len(settings.celex_ids),
         )
+    hits = hits[: settings.fusion_top_k]
     # Every row carries the same value, NULL when the vector side is empty. No
     # rows at all means both sides were empty.
     nearest = rows[0][-1] if rows else None
@@ -437,6 +455,42 @@ def with_coverage(
     return (head + tail + rest)[:top_n]
 
 
+def rerank(
+    question: str,
+    hits: list[Retrieved],
+    coverage_candidates: list[Retrieved],
+    reranker: Reranker,
+) -> tuple[list[Retrieved], list[Retrieved]]:
+    """Rescore every candidate with the cross-encoder.
+
+    Returns the fused candidates reordered (pinned references stay first, in
+    reference order; the rest by reranker score), and the best candidate of
+    each regulation by reranker score, best first, for coverage. Every
+    candidate of a regulation competes for its coverage slot, whether fusion
+    or the per-regulation search found it.
+    """
+    # A chunk found by both keeps its fused version: ranks, pin and all.
+    pool = {h.chunk_id: h for h in coverage_candidates} | {h.chunk_id: h for h in hits}
+    scores = reranker(query_input(question), [chunk_input(h.header, h.text) for h in pool.values()])
+    scored = {
+        chunk_id: replace(h, rerank_score=score)
+        for (chunk_id, h), score in zip(pool.items(), scores, strict=True)
+    }
+
+    def order(h: Retrieved) -> tuple[bool, int, float, int]:
+        reference_order = h.reference_rank or 0 if h.pinned else 0
+        return (not h.pinned, reference_order, -(h.rerank_score or 0.0), h.chunk_id)
+
+    ranked = sorted((scored[h.chunk_id] for h in hits), key=order)
+    best: dict[str, Retrieved] = {}
+    for h in scored.values():
+        current = best.get(h.celex)
+        if current is None or (h.rerank_score or 0.0) > (current.rerank_score or 0.0):
+            best[h.celex] = h
+    by_score = sorted(best.values(), key=lambda h: (-(h.rerank_score or 0.0), h.chunk_id))
+    return ranked, by_score
+
+
 def _hit(row: tuple[Any, ...]) -> Retrieved:
     (
         chunk_id,
@@ -467,6 +521,7 @@ def _hit(row: tuple[Any, ...]) -> Retrieved:
         reference_rank=ref_rank,
         pinned=bool(pinned),
         coverage=False,
+        rerank_score=None,
         fused_score=float(score),
         similarity=None if similarity is None else float(similarity),
         strategy=strategy,

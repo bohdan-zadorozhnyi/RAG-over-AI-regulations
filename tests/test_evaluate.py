@@ -224,6 +224,7 @@ def chunk(*citations: str, chunk_id: int = 1) -> Retrieved:
         reference_rank=None,
         pinned=False,
         coverage=False,
+        rerank_score=None,
         fused_score=0.01,
         similarity=0.5,
         strategy=SECTION_AWARE,
@@ -433,3 +434,22 @@ def test_report_flags_an_incomplete_question_set(tmp_path: Path) -> None:
     path = tmp_path / "eval-report.md"
     write_report(runs, SHIPPED, path, expected_questions=80, sha=None)
     assert "Incomplete question set: 40 of 80" in path.read_text()
+
+
+def test_cached_reranker_scores_each_pair_once() -> None:
+    from regrag.evaluate import cached_reranker
+
+    calls: list[list[str]] = []
+
+    def rerank(question: str, texts: list[str]) -> list[float]:  # type: ignore[override]
+        calls.append(list(texts))
+        return [float(len(t)) for t in texts]
+
+    cached = cached_reranker(rerank)  # type: ignore[arg-type]
+    assert cached("q", ["aa", "b"]) == [2.0, 1.0]
+    assert cached("q", ["b", "ccc", "b"]) == [1.0, 3.0, 1.0]
+    assert calls == [["aa", "b"], ["ccc"]]
+
+
+def test_matrix_puts_the_shipped_combination_first() -> None:
+    assert matrix_params()[0] == SearchParams.from_settings()

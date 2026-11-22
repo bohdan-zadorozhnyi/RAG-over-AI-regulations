@@ -50,6 +50,7 @@ from regrag.config import config_hash, settings
 from regrag.db import Connection, connect
 from regrag.encoder import Encoder, Vectors, load_encoder, query_input
 from regrag.models import RECURSIVE, Retrieved, SearchResult, select_strategies
+from regrag.reranker import Reranker, load_reranker
 from regrag.retrieve import SearchParams, search
 
 HIT_AT = 5  # the metrics' definition: hit_at_5, recall_at_5
@@ -415,7 +416,11 @@ class RunResult:
 
 
 def matrix_params(strategy: str = "all", matrix: bool = True) -> list[SearchParams]:
-    """Every combination to score. The shipped one is always included."""
+    """Every combination to score, the shipped one first.
+
+    First matters with a reranker: its scores are cached across combinations,
+    so only the first combination's latency includes every reranker call.
+    """
     shipped = SearchParams.from_settings(None if strategy == "all" else strategy)
     if not matrix:
         return [shipped]
@@ -425,7 +430,7 @@ def matrix_params(strategy: str = "all", matrix: bool = True) -> list[SearchPara
         for exclude in (False, True)
         for norm in settings.eval_fts_rank_normalizations
     ]
-    return combos if shipped in combos else [shipped, *combos]
+    return [shipped, *(c for c in combos if c != shipped)]
 
 
 def cached_encoder(encode: Encoder, texts: Sequence[str]) -> Encoder:
@@ -439,15 +444,35 @@ def cached_encoder(encode: Encoder, texts: Sequence[str]) -> Encoder:
     return lookup
 
 
+def cached_reranker(rerank: Reranker) -> Reranker:
+    """Reranker scores depend only on (question, candidate text), so they are
+    reused across combinations; the first combination pays for every call."""
+    table: dict[tuple[str, str], float] = {}
+
+    def lookup(question: str, candidates: Sequence[str]) -> list[float]:
+        missing = list(dict.fromkeys(c for c in candidates if (question, c) not in table))
+        for text, score in zip(missing, rerank(question, missing), strict=True):
+            table[(question, text)] = score
+        return [table[(question, c)] for c in candidates]
+
+    return lookup
+
+
 def run_matrix(
     questions: Sequence[Question],
     params_list: Sequence[SearchParams],
     conn: Connection,
     encoder: Encoder | None = None,
+    reranker: Reranker | None = None,
 ) -> list[RunResult]:
     encode = cached_encoder(encoder or load_encoder(), [query_input(q.question) for q in questions])
+    raw_rerank = (reranker or load_reranker()) if settings.rerank_model else None
+    rerank = cached_reranker(raw_rerank) if raw_rerank else None
     if questions and params_list:  # untimed: the first timed search would pay for cold caches
-        search(questions[0].question, params_list[0], conn=conn, encoder=encode)
+        # uncached reranker: the first timed search must still pay for its scores
+        search(
+            questions[0].question, params_list[0], conn=conn, encoder=encode, reranker=raw_rerank
+        )
     fingerprints: dict[str, tuple[int, str]] = {}
     runs = []
     for params in params_list:
@@ -462,7 +487,7 @@ def run_matrix(
         results = []
         for q in questions:
             started = time.perf_counter()
-            found = search(q.question, params, conn=conn, encoder=encode)
+            found = search(q.question, params, conn=conn, encoder=encode, reranker=rerank)
             elapsed_ms = (time.perf_counter() - started) * 1000
             results.append(score_question(q, found, elapsed_ms))
         runs.append(
@@ -536,6 +561,7 @@ def _retrieved_json(r: QuestionResult) -> dict[str, Any]:
                 "reference_rank": h.reference_rank,
                 "pinned": h.pinned,
                 "coverage": h.coverage,
+                "rerank_score": h.rerank_score,
                 "similarity": h.similarity,
                 "fused_score": h.fused_score,
             }
@@ -566,6 +592,7 @@ def run(
     allow_incomplete: bool = False,
     conn: Connection | None = None,
     encoder: Encoder | None = None,
+    reranker: Reranker | None = None,
 ) -> list[RunResult]:
     """Load the questions, score every combination, record and write outputs."""
     questions = load_questions(settings.eval_questions_path)
@@ -579,7 +606,7 @@ def run(
     db = conn or connect()
     try:
         store_questions(db, questions)
-        runs = run_matrix(questions, params_list, db, encoder)
+        runs = run_matrix(questions, params_list, db, encoder, reranker)
         sha = git_sha()
         record_runs(db, runs, sha)
     finally:
@@ -744,7 +771,7 @@ def _detail(role: str, r: RunResult) -> list[str]:
         "  - Few out-of-scope questions, so wide error bars: evidence of signal, "
         "not a refusal threshold.",
         f"- Provisions cited per retrieved chunk: {m.provisions_per_chunk:.2f}",
-        f"- Mean search latency: {m.mean_latency_ms:.1f} ms (SQL only; question embeddings cached)",
+        f"- Mean search latency: {m.mean_latency_ms:.1f} ms ({_latency_note(role)})",
         f"- Chunks searched: {r.chunk_count:,} · config {r.config_hash} · "
         f"corpus {r.corpus_hash[:12]}",
         "",
@@ -782,6 +809,14 @@ def _out_of_scope_similarities(r: RunResult) -> list[str]:
             f"| {shown} | {below} |"
         )
     return [*lines, ""]
+
+
+def _latency_note(role: str) -> str:
+    if not settings.rerank_model:
+        return "SQL only; question embeddings cached"
+    if role == "shipped":
+        return "SQL and reranking; question embeddings cached"
+    return "reranker scores cached from the shipped run, so not a latency figure"
 
 
 def _spread(s: Spread | None) -> str:

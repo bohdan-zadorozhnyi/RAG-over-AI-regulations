@@ -23,6 +23,7 @@ def hit(**overrides: object) -> Retrieved:
         "reference_rank": None,
         "pinned": False,
         "coverage": False,
+        "rerank_score": None,
         "fused_score": 0.0161,
         "similarity": 0.7123,
         "strategy": "section_aware",

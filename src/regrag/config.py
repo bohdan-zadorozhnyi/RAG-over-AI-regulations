@@ -70,6 +70,18 @@ class Settings(BaseSettings):
     # Reserve the results' tail for the best chunk of each regulation the
     # first fusion_top_k - (regulations - 1) results leave out.
     regulation_coverage: bool = True
+    # Candidates per regulation offered to coverage. Without a reranker the
+    # first one takes the slot; with one, the best by reranker score.
+    coverage_candidates: int = 5
+
+    # Reranking: a cross-encoder rescores the top rerank_candidates fused
+    # chunks (plus the coverage candidates) before the top fusion_top_k are
+    # kept. Runs on embedding_device, in fp32. Empty rerank_model disables it.
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_candidates: int = 40
+    # Question + header + chunk; chunks are at most chunk_target_tokens.
+    rerank_max_length: int = 1024
+    rerank_batch_size: int = 16
     rrf_k: int = 60
     # ts_rank normalisation bitmask (Postgres docs): 0 none, 1 divide by
     # 1 + log(length), 2 divide by length. Long recitals win under 0; an eval
@@ -120,6 +132,7 @@ _NOT_HASHED = frozenset(
         "http_retries",
         "http_user_agent",
         "embedding_batch_size",
+        "rerank_batch_size",
         "embedding_device",
         "answer_provider",
         "answer_model",

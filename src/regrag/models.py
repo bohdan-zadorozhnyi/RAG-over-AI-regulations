@@ -69,6 +69,7 @@ class Retrieved:
     reference_rank: int | None  # None: no provision it covers is named in the question
     pinned: bool  # the best chunk of a provision the question names; ranked first
     coverage: bool  # placed in the results' tail for a regulation the head left out
+    rerank_score: float | None  # cross-encoder score; None when reranking is off
     fused_score: float
     similarity: float | None  # cosine similarity to the question; None: full-text only
     strategy: str

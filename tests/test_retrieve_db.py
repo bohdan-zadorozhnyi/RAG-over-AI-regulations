@@ -218,6 +218,7 @@ def test_real_baseline_search_fills_vector_top_k(
         "embedding_model": real_model,
         "fusion_top_k": 50,  # return every candidate so the vector side can be counted
         "hnsw_ef_search": 10,  # well below vector_top_k: only iterative scanning fills it
+        "rerank_model": "",  # measures the vector side only
     }.items():
         monkeypatch.setattr(settings, name, value)
 
@@ -292,3 +293,27 @@ def test_coverage_brings_the_missing_regulation_into_the_tail(
 
     monkeypatch.setattr(settings, "regulation_coverage", False)
     assert all(h.celex == TEST_CELEX for h in hits(two_regulations, "alpha"))
+
+
+def test_reranker_reorders_and_picks_coverage(
+    two_regulations: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from collections.abc import Sequence
+
+    def fake(question: str, texts: Sequence[str]) -> list[float]:
+        # alpha chunks first; within the second regulation, Epsilon over Delta
+        return [2.0 if "lpha" in t else 1.0 if t.endswith("Epsilon.") else 0.0 for t in texts]
+
+    monkeypatch.setattr(settings, "rerank_model", "fake/reranker")
+    monkeypatch.setattr(settings, "fusion_top_k", 3)
+    found = search(
+        "alpha",
+        SearchParams.from_settings(),
+        conn=two_regulations,
+        encoder=topic_encoder,
+        reranker=fake,
+    ).hits
+    assert [h.rerank_score for h in found[:2]] == [2.0, 2.0]
+    assert all(h.celex == TEST_CELEX for h in found[:2])  # head: first regulation only
+    tail = found[2]
+    assert tail.coverage and tail.celex == SECOND_CELEX and tail.text.endswith("Epsilon.")

@@ -160,6 +160,7 @@ def ask(
             + (f"   ref #{hit.reference_rank}" if hit.reference_rank else "")
             + ("  pinned" if hit.pinned else "")
             + ("  coverage" if hit.coverage else "")
+            + (f"   rerank {hit.rerank_score:.3f}" if hit.rerank_score is not None else "")
         )
         if hit.header:
             typer.echo(f"   {hit.header}")

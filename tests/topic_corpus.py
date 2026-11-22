@@ -70,6 +70,7 @@ def use_test_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         "chunk_overlap_tokens": 2,
         "chunk_strategy": SECTION_AWARE,
         "exclude_recitals": False,
+        "rerank_model": "",  # reranking tests inject a fake
         "fts_rank_normalization": 0,
         "vector_top_k": 20,
         "fts_top_k": 20,
