@@ -26,10 +26,15 @@ the embedding barely registers it. parse_references() finds "Article N",
 scope. Chunks of the referenced provisions are ranked by vector distance and
 fused like the other two lists, and the best chunk of each referenced
 provision is pinned to the top: naming a provision is explicit intent.
+
+Regulation coverage (with_coverage) keeps the tail of the results for
+regulations the head leaves out, so cross-regulation questions reach the
+answer step with every regulation they span.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Any
 
 from pgvector.psycopg import register_vector
 
@@ -147,15 +152,48 @@ SELECT set_config('hnsw.ef_search', %(ef_search)s, true),
        set_config('hnsw.iterative_scan', 'strict_order', true)
 """
 
-# Filters apply to the section a chunk starts in (chunks.section_id).
-FUSED_SEARCH = """
-WITH
+# Shared by both queries below. Filters apply to the section a chunk starts
+# in (chunks.section_id).
+_QUERY_CTE = """
 query AS (
     SELECT (
         SELECT string_agg(quote_literal(lexeme), ' | ')
         FROM unnest(to_tsvector('english', %(question)s))
     )::tsquery AS tsq  -- NULL when the question is all stopwords
-),
+)"""
+
+# Reads a CTE `fused` (chunk_id, vector_rank, fts_rank, ref_rank, pinned,
+# score, distance) and returns one hit row per chunk, with its citations.
+_HITS = """
+SELECT f.chunk_id, d.celex, s.article_no, c.header, c.text,
+       f.vector_rank, f.fts_rank, f.ref_rank, f.pinned, f.score,
+       1 - f.distance AS similarity,
+       c.strategy, s.kind, s.path, cited.citations,
+       {nearest} AS nearest_similarity
+FROM fused f
+JOIN chunks c ON c.id = f.chunk_id
+JOIN sections s ON s.id = c.section_id
+JOIN documents d ON d.id = c.document_id
+CROSS JOIN LATERAL (
+    SELECT array_agg(citation ORDER BY first_section) AS citations
+    FROM (
+        SELECT CASE WHEN s2.kind = 'recital'
+                    THEN d.celex || ':Recital ' || substr(s2.path, length('recital-') + 1)
+                    ELSE d.celex || ':' || s2.article_no
+               END AS citation,
+               min(s2.id) AS first_section
+        FROM chunk_sections cs
+        JOIN sections s2 ON s2.id = cs.section_id
+        WHERE cs.chunk_id = f.chunk_id
+        GROUP BY 1
+    ) provisions
+) cited
+"""
+
+FUSED_SEARCH = (
+    "WITH"
+    + _QUERY_CTE
+    + """,
 vec AS (
     SELECT chunk_id, distance, row_number() OVER (ORDER BY distance, chunk_id) AS rank
     FROM (
@@ -234,34 +272,79 @@ fused AS (
     GROUP BY chunk_id
     ORDER BY pinned DESC, score DESC, chunk_id
     LIMIT %(top_n)s
-)
-SELECT f.chunk_id, d.celex, s.article_no, c.header, c.text,
-       f.vector_rank, f.fts_rank, f.ref_rank, f.pinned, f.score,
-       1 - f.distance AS similarity,
-       c.strategy, s.kind, s.path, cited.citations,
-       1 - (SELECT min(distance) FROM vec) AS nearest_similarity
-FROM fused f
-JOIN chunks c ON c.id = f.chunk_id
-JOIN sections s ON s.id = c.section_id
-JOIN documents d ON d.id = c.document_id
-CROSS JOIN LATERAL (
-    SELECT array_agg(citation ORDER BY first_section) AS citations
-    FROM (
-        SELECT CASE WHEN s2.kind = 'recital'
-                    THEN d.celex || ':Recital ' || substr(s2.path, length('recital-') + 1)
-                    ELSE d.celex || ':' || s2.article_no
-               END AS citation,
-               min(s2.id) AS first_section
-        FROM chunk_sections cs
-        JOIN sections s2 ON s2.id = cs.section_id
-        WHERE cs.chunk_id = f.chunk_id
-        GROUP BY 1
-    ) provisions
-) cited
+)"""
+    + _HITS.format(nearest="1 - (SELECT min(distance) FROM vec)")
+    + """
 -- Pinned first (the best chunk of each referenced provision, nearest first),
 -- then by fused score.
 ORDER BY f.pinned DESC, CASE WHEN f.pinned THEN f.ref_rank END, f.score DESC, f.chunk_id
 """
+)
+
+# The best chunk of each regulation in scope, by the same vector + full-text
+# fusion run within that regulation alone. Supplies regulation coverage.
+COVERAGE_SEARCH = (
+    "WITH"
+    + _QUERY_CTE
+    + """,
+doc_vec AS (
+    SELECT r.celex, n.chunk_id, n.distance,
+           row_number() OVER (PARTITION BY r.celex ORDER BY n.distance, n.chunk_id) AS rank
+    FROM unnest(%(celex_ids)s::text[]) AS r(celex)
+    CROSS JOIN LATERAL (
+        SELECT e.chunk_id, e.vector <=> %(qvec)s AS distance
+        FROM embeddings e
+        JOIN chunks c ON c.id = e.chunk_id
+        JOIN sections s ON s.id = c.section_id
+        JOIN documents d ON d.id = c.document_id
+        WHERE e.model = %(model)s
+          AND c.strategy = %(strategy)s
+          AND s.kind = ANY(%(kinds)s)
+          AND d.celex = r.celex
+        ORDER BY e.vector <=> %(qvec)s
+        LIMIT %(vector_k)s
+    ) n
+),
+doc_fts AS (
+    SELECT celex, chunk_id, rank
+    FROM (
+        SELECT d.celex, c.id AS chunk_id,
+               row_number() OVER (
+                   PARTITION BY d.celex ORDER BY ts_rank(c.tsv, query.tsq, %(norm)s) DESC, c.id
+               ) AS rank
+        FROM chunks c
+        JOIN sections s ON s.id = c.section_id
+        JOIN documents d ON d.id = c.document_id
+        CROSS JOIN query
+        WHERE c.tsv @@ query.tsq
+          AND c.strategy = %(strategy)s
+          AND s.kind = ANY(%(kinds)s)
+          AND d.celex = ANY(%(celex_ids)s)
+    ) ranked
+    WHERE rank <= %(fts_k)s
+),
+doc_fused AS (
+    SELECT celex, chunk_id, min(distance) AS distance,
+           sum(1.0::float8 / (%(rrf_k)s + rank)) AS score
+    FROM (
+        SELECT celex, chunk_id, rank, distance FROM doc_vec
+        UNION ALL
+        SELECT celex, chunk_id, rank, NULL FROM doc_fts
+    ) ranked
+    GROUP BY celex, chunk_id
+),
+fused AS (
+    SELECT DISTINCT ON (celex)
+           chunk_id, NULL::bigint AS vector_rank, NULL::bigint AS fts_rank,
+           NULL::bigint AS ref_rank, false AS pinned, score, distance
+    FROM doc_fused
+    ORDER BY celex, score DESC, chunk_id
+)"""
+    + _HITS.format(nearest="NULL::float8")
+    + """
+ORDER BY f.score DESC, f.chunk_id
+"""
+)
 
 
 def search(
@@ -303,54 +386,94 @@ def search(
             "rrf_k": settings.rrf_k,
             "top_n": settings.fusion_top_k,
         }
+        covering = settings.regulation_coverage and len(settings.celex_ids) > 1
         with db.transaction():
             db.execute(SET_HNSW, {"ef_search": str(settings.hnsw_ef_search)})
             rows = db.execute(FUSED_SEARCH, sql_params).fetchall()
+            coverage_rows = db.execute(COVERAGE_SEARCH, sql_params).fetchall() if covering else []
     finally:
         if owns_conn:
             db.close()
 
-    hits = [
-        Retrieved(
-            chunk_id=chunk_id,
-            celex=celex,
-            article_no=article_no,
-            header=header,
-            text=text,
-            vector_rank=vector_rank,
-            fts_rank=fts_rank,
-            reference_rank=ref_rank,
-            pinned=bool(pinned),
-            fused_score=float(score),
-            similarity=None if similarity is None else float(similarity),
-            strategy=row_strategy,
-            kind=SectionKind(kind),
-            section_path=path,
-            citations=tuple(citations or ()),
+    hits = [_hit(row) for row in rows]
+    if covering:
+        hits = with_coverage(
+            hits,
+            [_hit(row) for row in coverage_rows],
+            top_n=settings.fusion_top_k,
+            regulations=len(settings.celex_ids),
         )
-        for (
-            chunk_id,
-            celex,
-            article_no,
-            header,
-            text,
-            vector_rank,
-            fts_rank,
-            ref_rank,
-            pinned,
-            score,
-            similarity,
-            row_strategy,
-            kind,
-            path,
-            citations,
-            _nearest,
-        ) in rows
-    ]
     # Every row carries the same value, NULL when the vector side is empty. No
     # rows at all means both sides were empty.
     nearest = rows[0][-1] if rows else None
     return SearchResult(hits, None if nearest is None else float(nearest))
+
+
+def with_coverage(
+    hits: list[Retrieved], best_per_regulation: list[Retrieved], top_n: int, regulations: int
+) -> list[Retrieved]:
+    """Reserve the tail of the results for regulations the head leaves out.
+
+    The first top_n - (regulations - 1) hits stay as fused, so hit@5 is
+    untouched by construction while top_n >= regulations + 4. Each remaining
+    slot goes to the best chunk (ranked within its own regulation) of a
+    regulation the head does not cite, best first; leftover slots go back to
+    the fused order. A whole-question embedding is dominated by whichever
+    regulation's vocabulary the question leans on, but within each regulation
+    the right provision usually ranks first, so a cross-regulation question
+    then has every regulation in the context step 7 answers from.
+    """
+    head = hits[: max(top_n - (regulations - 1), 0)]
+    covered = {h.celex for h in head}
+    taken = {h.chunk_id for h in head}
+    fused = {h.chunk_id: h for h in hits}
+    tail = []
+    for best in best_per_regulation:
+        if best.celex not in covered and best.chunk_id not in taken:
+            tail.append(replace(fused.get(best.chunk_id, best), coverage=True))
+            covered.add(best.celex)
+            taken.add(best.chunk_id)
+    rest = [h for h in hits if h.chunk_id not in taken]
+    return (head + tail + rest)[:top_n]
+
+
+def _hit(row: tuple[Any, ...]) -> Retrieved:
+    (
+        chunk_id,
+        celex,
+        article_no,
+        header,
+        text,
+        vector_rank,
+        fts_rank,
+        ref_rank,
+        pinned,
+        score,
+        similarity,
+        strategy,
+        kind,
+        path,
+        citations,
+        _nearest,
+    ) = row
+    return Retrieved(
+        chunk_id=chunk_id,
+        celex=celex,
+        article_no=article_no,
+        header=header,
+        text=text,
+        vector_rank=vector_rank,
+        fts_rank=fts_rank,
+        reference_rank=ref_rank,
+        pinned=bool(pinned),
+        coverage=False,
+        fused_score=float(score),
+        similarity=None if similarity is None else float(similarity),
+        strategy=strategy,
+        kind=SectionKind(kind),
+        section_path=path,
+        citations=tuple(citations or ()),
+    )
 
 
 def reciprocal_rank_fusion(

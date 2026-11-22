@@ -159,6 +159,7 @@ def ask(
             f"sim {_similarity(hit.similarity)}"
             + (f"   ref #{hit.reference_rank}" if hit.reference_rank else "")
             + ("  pinned" if hit.pinned else "")
+            + ("  coverage" if hit.coverage else "")
         )
         if hit.header:
             typer.echo(f"   {hit.header}")

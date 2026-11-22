@@ -68,6 +68,7 @@ class Retrieved:
     fts_rank: int | None  # None: not in the full-text top-k
     reference_rank: int | None  # None: no provision it covers is named in the question
     pinned: bool  # the best chunk of a provision the question names; ranked first
+    coverage: bool  # placed in the results' tail for a regulation the head left out
     fused_score: float
     similarity: float | None  # cosine similarity to the question; None: full-text only
     strategy: str

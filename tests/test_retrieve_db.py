@@ -246,3 +246,49 @@ def test_reference_pins_the_named_provision(indexed: Connection) -> None:
 def test_no_reference_changes_nothing(indexed: Connection) -> None:
     found = hits(indexed, "alpha gamma obligations")
     assert all(h.reference_rank is None and not h.pinned for h in found)
+
+
+# --- regulation coverage ---------------------------------------------------
+
+SECOND_CELEX = "TEST00001"
+
+
+@pytest.fixture
+def two_regulations(indexed: Connection, monkeypatch: pytest.MonkeyPatch) -> Connection:
+    from datetime import UTC, datetime
+
+    from regrag.chunk import chunk_all
+    from regrag.embed import embed_pending
+    from regrag.models import Document, Section
+    from regrag.parse import store_document
+
+    monkeypatch.setattr(settings, "celex_ids", [TEST_CELEX, SECOND_CELEX])
+    monkeypatch.setattr(
+        settings, "document_titles", {TEST_CELEX: "Test Act", SECOND_CELEX: "Other Act"}
+    )
+    second = [
+        Section("chapter-I/article-1/paragraph-1", SectionKind.ARTICLE, "1", "1", "H", "1. Delta."),
+        Section(
+            "chapter-I/article-2/paragraph-1", SectionKind.ARTICLE, "2", "1", "H", "1. Epsilon."
+        ),
+    ]
+    store_document(
+        indexed,
+        Document(SECOND_CELEX, "Other Act", "https://example.test/2", "v1", datetime.now(UTC), 1),
+        second,
+    )
+    chunk_all(conn=indexed, count=lambda t: len(t.split()))
+    embed_pending(conn=indexed, encoder=topic_encoder)
+    return indexed
+
+
+def test_coverage_brings_the_missing_regulation_into_the_tail(
+    two_regulations: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "fusion_top_k", 3)
+    found = hits(two_regulations, "alpha")
+    assert [h.celex for h in found[:2]] == [TEST_CELEX, TEST_CELEX]  # head as fused
+    assert found[2].celex == SECOND_CELEX and found[2].coverage
+
+    monkeypatch.setattr(settings, "regulation_coverage", False)
+    assert all(h.celex == TEST_CELEX for h in hits(two_regulations, "alpha"))

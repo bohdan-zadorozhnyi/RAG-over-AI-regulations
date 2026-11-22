@@ -223,6 +223,7 @@ def chunk(*citations: str, chunk_id: int = 1) -> Retrieved:
         fts_rank=None,
         reference_rank=None,
         pinned=False,
+        coverage=False,
         fused_score=0.01,
         similarity=0.5,
         strategy=SECTION_AWARE,

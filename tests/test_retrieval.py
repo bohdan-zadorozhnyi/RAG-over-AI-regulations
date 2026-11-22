@@ -7,7 +7,8 @@ only one; absent documents must not contribute.
 
 import pytest
 
-from regrag.retrieve import reciprocal_rank_fusion
+from regrag.models import Retrieved, SectionKind
+from regrag.retrieve import reciprocal_rank_fusion, with_coverage
 
 
 def test_rrf_prefers_documents_ranked_well_in_both() -> None:
@@ -61,3 +62,54 @@ def test_rrf_smaller_k_rewards_top_ranks_more() -> None:
 def test_rrf_rejects_invalid_k_or_rank(k: int, rank: int) -> None:
     with pytest.raises(ValueError):
         reciprocal_rank_fusion([[(1, rank)]], k=k, top_n=1)
+
+
+# --- regulation coverage (pure) ---------------------------------------------
+
+def chunk(chunk_id: int, celex: str) -> Retrieved:
+    return Retrieved(
+        chunk_id=chunk_id,
+        celex=celex,
+        article_no="1",
+        header="",
+        text="",
+        vector_rank=chunk_id,
+        fts_rank=None,
+        reference_rank=None,
+        pinned=False,
+        coverage=False,
+        fused_score=1.0 / chunk_id,
+        similarity=0.5,
+        strategy="section_aware",
+        kind=SectionKind.ARTICLE,
+        section_path="p",
+        citations=(f"{celex}:1",),
+    )
+
+
+def test_coverage_fills_the_tail_with_missing_regulations() -> None:
+    fused = [chunk(i, "A") for i in range(1, 9)]  # one regulation fills all 8
+    best = [chunk(20, "B"), chunk(30, "C"), chunk(1, "A")]
+    out = with_coverage(fused, best, top_n=8, regulations=3)
+    assert [h.chunk_id for h in out] == [1, 2, 3, 4, 5, 6, 20, 30]
+    assert [h.coverage for h in out] == [False] * 6 + [True, True]
+
+
+def test_coverage_leaves_the_head_and_a_covered_tail_alone() -> None:
+    fused = [chunk(1, "A"), chunk(2, "B"), chunk(3, "C"), chunk(4, "A"), chunk(5, "A")]
+    best = [chunk(2, "B"), chunk(3, "C")]
+    out = with_coverage(fused, best, top_n=5, regulations=3)
+    assert out == fused  # every regulation already in the head
+
+
+def test_coverage_reuses_the_fused_hit_when_the_chunk_was_already_ranked() -> None:
+    fused = [chunk(1, "A"), chunk(2, "A"), chunk(3, "B")]
+    best = [chunk(3, "B")]
+    out = with_coverage(fused, best, top_n=3, regulations=2)
+    assert [h.chunk_id for h in out] == [1, 2, 3]
+    assert out[2].coverage and out[2].vector_rank == 3  # fused ranks kept
+
+
+def test_coverage_with_a_short_fused_list() -> None:
+    out = with_coverage([chunk(1, "A")], [chunk(9, "B")], top_n=8, regulations=2)
+    assert [h.chunk_id for h in out] == [1, 9]

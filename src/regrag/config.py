@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     fusion_top_k: int = 8
     # Chunks of explicitly referenced provisions considered (the third ranking).
     reference_top_k: int = 20
+    # Reserve the results' tail for the best chunk of each regulation the
+    # first fusion_top_k - (regulations - 1) results leave out.
+    regulation_coverage: bool = True
     rrf_k: int = 60
     # ts_rank normalisation bitmask (Postgres docs): 0 none, 1 divide by
     # 1 + log(length), 2 divide by length. Long recitals win under 0; an eval

@@ -535,6 +535,7 @@ def _retrieved_json(r: QuestionResult) -> dict[str, Any]:
                 "fts_rank": h.fts_rank,
                 "reference_rank": h.reference_rank,
                 "pinned": h.pinned,
+                "coverage": h.coverage,
                 "similarity": h.similarity,
                 "fused_score": h.fused_score,
             }
