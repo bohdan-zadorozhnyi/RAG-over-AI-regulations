@@ -212,12 +212,15 @@ def eval(
 
     n = runs[0].metrics.n_questions
     typer.echo(f"{n} questions, {len(runs)} combinations")
-    typer.echo(f"{'configuration':<38} {'hit@5':>6} {'recall@5':>9} {'MRR':>6} {'AUC':>6}")
+    typer.echo(
+        f"{'configuration':<38} {'hit@5':>6} {'recall@5':>9} {'context':>8} {'MRR':>6} {'AUC':>6}"
+    )
     for r in runs:
         m = r.metrics
         auc = "-" if m.separation_auc is None else f"{m.separation_auc:.3f}"
         typer.echo(
-            f"{r.params.label:<38} {m.hit_at_5:>6.3f} {m.recall_at_5:>9.3f} {m.mrr:>6.3f} {auc:>6}"
+            f"{r.params.label:<38} {m.hit_at_5:>6.3f} {m.recall_at_5:>9.3f} "
+            f"{m.context_recall:>8.3f} {m.mrr:>6.3f} {auc:>6}"
         )
     written = [p for p in (report, metrics) if p]
     typer.echo(f"wrote {', '.join(written)}")

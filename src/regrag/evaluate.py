@@ -8,8 +8,10 @@ apart so the report stays readable:
                shipped configuration. The only number CI checks.
   quality      recall_at_5 (share of a question's expected articles in the
                top 5; hit_at_5 is too generous for cross-document questions),
-               mrr, and separation_auc: whether the nearest-chunk similarity
-               of in-scope questions is higher than of out-of-scope ones.
+               context_recall (the same over every retrieved chunk: the
+               fusion_top_k chunks step 7 answers from), mrr, and
+               separation_auc: whether the nearest-chunk similarity of
+               in-scope questions is higher than of out-of-scope ones.
   descriptive  provisions_per_chunk, latency, chunk counts. No target value;
                they explain results and never go near the gate.
 
@@ -284,6 +286,7 @@ class QuestionResult:
     hits: tuple[Retrieved, ...]
     first_hit_rank: int | None
     recall_at_5: float | None  # None for out_of_scope
+    context_recall: float | None  # over all retrieved chunks; None for out_of_scope
     nearest_similarity: float | None
     latency_ms: float
 
@@ -304,6 +307,9 @@ def score_question(question: Question, result: SearchResult, latency_ms: float) 
         recall_at_5=(
             recall_at(citations, question.expected_articles, HIT_AT) if answerable else None
         ),
+        context_recall=(
+            recall_at(citations, question.expected_articles, len(citations)) if answerable else None
+        ),
         nearest_similarity=result.nearest_similarity,
         latency_ms=latency_ms,
     )
@@ -314,6 +320,7 @@ class CategoryMetrics:
     n: int
     hit_at_5: float
     recall_at_5: float
+    context_recall: float
     mrr: float
 
 
@@ -323,6 +330,7 @@ class Metrics:
     hit_at_5: float
     # quality
     recall_at_5: float
+    context_recall: float
     mrr: float
     separation_auc: float | None
     similarity_in_scope: Spread | None
@@ -349,6 +357,7 @@ def summarise(results: Sequence[QuestionResult]) -> Metrics:
             n=len(rs),
             hit_at_5=statistics.mean(r.hit_at_5 for r in rs),
             recall_at_5=statistics.mean(r.recall_at_5 or 0.0 for r in rs),
+            context_recall=statistics.mean(r.context_recall or 0.0 for r in rs),
             mrr=statistics.mean(reciprocal_rank(r.first_hit_rank) for r in rs),
         )
 
@@ -363,6 +372,7 @@ def summarise(results: Sequence[QuestionResult]) -> Metrics:
     return Metrics(
         hit_at_5=overall.hit_at_5,
         recall_at_5=overall.recall_at_5,
+        context_recall=overall.context_recall,
         mrr=overall.mrr,
         separation_auc=separation_auc(in_scope, out_of_scope),
         similarity_in_scope=spread(in_scope),
@@ -514,6 +524,7 @@ def _retrieved_json(r: QuestionResult) -> dict[str, Any]:
     return {
         "nearest_similarity": r.nearest_similarity,
         "recall_at_5": r.recall_at_5,
+        "context_recall": r.context_recall,
         "latency_ms": round(r.latency_ms, 2),
         "chunks": [
             {
@@ -610,6 +621,7 @@ def write_metrics_json(
     payload = {
         "hit_at_5": m.hit_at_5,
         "recall_at_5": m.recall_at_5,
+        "context_recall": m.context_recall,
         "mrr": m.mrr,
         "separation_auc": m.separation_auc,
         "n_questions": m.n_questions,
@@ -621,6 +633,7 @@ def write_metrics_json(
             r.params.label: {
                 "hit_at_5": r.metrics.hit_at_5,
                 "recall_at_5": r.metrics.recall_at_5,
+                "context_recall": r.metrics.context_recall,
                 "mrr": r.metrics.mrr,
                 "separation_auc": r.metrics.separation_auc,
                 "config_hash": r.config_hash,
@@ -702,21 +715,24 @@ def _detail(role: str, r: RunResult) -> list[str]:
     lines = [
         f"## {r.params.label} ({role})",
         "",
-        "| category | n | hit@5 | recall@5 | MRR |",
-        "|---|---|---|---|---|",
+        f"| category | n | hit@5 | recall@5 | recall@{settings.fusion_top_k} (context) | MRR |",
+        "|---|---|---|---|---|---|",
     ]
     for name, c in m.by_category.items():
-        lines.append(f"| {name} | {c.n} | {c.hit_at_5:.3f} | {c.recall_at_5:.3f} | {c.mrr:.3f} |")
+        lines.append(
+            f"| {name} | {c.n} | {c.hit_at_5:.3f} | {c.recall_at_5:.3f} "
+            f"| {c.context_recall:.3f} | {c.mrr:.3f} |"
+        )
         no_collisions = m.direct_lookup_without_collisions
         if name == DIRECT_LOOKUP and no_collisions is not None:
             c = no_collisions
             lines.append(
                 f"| {name}, collision questions excluded | {c.n} | {c.hit_at_5:.3f} "
-                f"| {c.recall_at_5:.3f} | {c.mrr:.3f} |"
+                f"| {c.recall_at_5:.3f} | {c.context_recall:.3f} | {c.mrr:.3f} |"
             )
     lines.append(
         f"| **all answerable** | {m.n_answerable} | {m.hit_at_5:.3f} "
-        f"| {m.recall_at_5:.3f} | {m.mrr:.3f} |"
+        f"| {m.recall_at_5:.3f} | {m.context_recall:.3f} | {m.mrr:.3f} |"
     )
     auc = "n/a" if m.separation_auc is None else f"{m.separation_auc:.3f}"
     lines += [

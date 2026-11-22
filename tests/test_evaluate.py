@@ -244,6 +244,7 @@ def test_score_question() -> None:
 
     late = result(q, [("Z:1",)] * 5 + [("X:5",)])
     assert late.first_hit_rank == 6 and not late.hit_at_5
+    assert late.recall_at_5 == 0.0 and late.context_recall == 0.5  # rank 6 is in the context
 
     oos = result(question("out_of_scope"), [("Z:1",)])
     assert oos.first_hit_rank is None and oos.recall_at_5 is None and not oos.hit_at_5
@@ -262,7 +263,7 @@ def test_summarise_averages_over_answerable_questions_only() -> None:
     assert m.mrr == pytest.approx((1 + 1 / 3 + 0) / 3)
     assert m.recall_at_5 == pytest.approx((1 + 1 + 0) / 3)
     assert m.by_category["obligation"] == CategoryMetrics(
-        n=2, hit_at_5=0.5, recall_at_5=0.5, mrr=pytest.approx(1 / 6)
+        n=2, hit_at_5=0.5, recall_at_5=0.5, context_recall=0.5, mrr=pytest.approx(1 / 6)
     )
     assert "out_of_scope" not in m.by_category
     assert m.separation_auc == pytest.approx(2 / 3)  # 0.9 and 0.8 beat 0.5; 0.4 does not
@@ -352,6 +353,7 @@ def metrics(hit: float, n: int = 40) -> Metrics:
     return Metrics(
         hit_at_5=hit,
         recall_at_5=hit - 0.1,
+        context_recall=hit - 0.05,
         mrr=hit - 0.2,
         separation_auc=0.8,
         similarity_in_scope=spread([0.6, 0.7]),
@@ -360,8 +362,8 @@ def metrics(hit: float, n: int = 40) -> Metrics:
         mean_latency_ms=3.0,
         n_questions=n,
         n_answerable=30,
-        by_category={"direct_lookup": CategoryMetrics(10, hit, hit, hit)},
-        direct_lookup_without_collisions=CategoryMetrics(8, hit, hit, hit),
+        by_category={"direct_lookup": CategoryMetrics(10, hit, hit, hit, hit)},
+        direct_lookup_without_collisions=CategoryMetrics(8, hit, hit, hit, hit),
     )
 
 
@@ -418,6 +420,7 @@ def test_report_leads_with_the_matrix_and_details_three_runs(tmp_path: Path) -> 
     assert "**cd-01** (cross_document, partial, recall@5 0.50)" in text
     assert "Incomplete" not in text
     assert "| direct_lookup, collision questions excluded | 8 |" in text
+    assert "recall@8 (context)" in text
     # out-of-scope listing: per question, tier shown, highest similarity first
     assert text.index("| oos-06 | B | refuse | 0.650 | 2 of 3 |") < text.index(
         "| oos-09 | A | refuse | 0.400 | 0 of 3 |"
